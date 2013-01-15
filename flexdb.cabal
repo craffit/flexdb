@@ -1,0 +1,45 @@
+Name:                flexdb
+Version:             0.1
+Synopsis:            A simple functional relational mapper.
+Description:         A simple functional relational mapper.
+License:             BSD3
+License-file:        LICENSE
+Author:              Bram Schuur
+Maintainer:          bram@typlab.com
+Category:            Debug
+Build-type:          Simple
+Cabal-version:       >=1.6
+
+Library
+  exposed-modules:    DB.Flex.Config
+                      DB.Flex.Monad
+                      DB.Flex.Query
+                      DB.Flex.Query.Ancestry
+                      DB.Flex.Query.Base
+                      DB.Flex.Query.Derived
+                      DB.Flex.Query.Ontology
+                      DB.Flex.Query.Typed
+                      DB.Flex.Query.View
+                      DB.Flex.Record
+--                      DB.Flex.Test
+ 
+  build-depends:       base >= 3 && <= 5
+                     , containers
+                     , convertible == 1.0.*
+                     , fclabels
+                     , ghc-prim
+                     , HDBC
+                     , HDBC-postgresql
+                     , hslogger
+                     , mtl
+                     , monad-control 
+                     , safe == 0.3.*
+                     , syb ==0.3.*
+                     , tagged 
+                     , template-haskell == 2.8.*
+                     , time
+                     , uuid
+                     , transformers-base == 0.4.*
+                     
+  hs-source-dirs:      src
+  ghc-options          : -Wall
