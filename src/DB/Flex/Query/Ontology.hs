@@ -5,20 +5,15 @@ module DB.Flex.Query.Ontology where
 
 import Data.Convertible
 import Data.Label
-import Data.Proxy
+import Data.Label.Util
 import DB.Flex.Monad
 import DB.Flex.Record
 import DB.Flex.Query.Typed
 
+{-
 data OneToOne     = OneToOne
 data OneToZeroOne = OneToZeroOne
 data OneToMany    = OneToMany
-
-type a |> b = forall f. a f :-> f b
-data (><) a b x = Conj (a |> x) (b |> x)
-
-(>-<) :: (a |> x) -> (b |> x) -> (a >< b) x
-(>-<) = Conj
 
 
 class (DBTable t, Ord (PrimKey t), Convertible (PrimKey t) SqlValue) => DBPrimary t where
@@ -32,7 +27,7 @@ class (DBTable t, DBPrimary t') => Foreign t t' where
 refKey' :: forall t t' f. Foreign t t' => Proxy (t' f) -> t f :-> f (PrimKey t')
 refKey' Proxy = refKey (undefined :: t' f)
 
-{-
+
 parent :: (Foreign t t', Eq (PrimKey t')) => Query i l (t (SingleExpr l)) -> Query i l (t' (SingleExpr l))
 parent q = 
   do par   <- table

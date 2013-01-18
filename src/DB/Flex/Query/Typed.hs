@@ -1,3 +1,4 @@
+{-# OPTIONS -fno-warn-orphans #-}
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, TypeOperators, KindSignatures
            , OverlappingInstances, ScopedTypeVariables, FlexibleInstances, FlexibleContexts
            , UndecidableInstances, TypeSynonymInstances, TupleSections, DataKinds, PolyKinds, TypeFamilies
@@ -30,6 +31,11 @@ module DB.Flex.Query.Typed
    , VType(..), VAggr(..), SubAggr(..), L(..), AggrVal, IAggr, MeetAggr, MeetType
    
    ) where
+
+import Data.Functor1
+import Data.Foldable1
+import Data.Traversable1
+import Data.Record.Abstract
 
 import Data.Proxy
 import Data.UUID

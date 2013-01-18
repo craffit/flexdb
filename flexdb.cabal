@@ -11,18 +11,26 @@ Build-type:          Simple
 Cabal-version:       >=1.6
 
 Library
-  exposed-modules:    DB.Flex.Config
+  exposed-modules:    Data.Label.Util
+                      Data.Record.Abstract
+                      Data.Foldable1
+                      Data.Functor1
+                      Data.Traversable1
+                      Data.Zippable1
+                      
+                      DB.Flex
+                      DB.Flex.Config
                       DB.Flex.Monad
                       DB.Flex.Query
                       DB.Flex.Query.Ancestry
-                      DB.Flex.Query.Base
                       DB.Flex.Query.Derived
                       DB.Flex.Query.Ontology
                       DB.Flex.Query.Typed
                       DB.Flex.Query.View
                       DB.Flex.Record
---                      DB.Flex.Test
- 
+
+  other-modules:     DB.Flex.Query.Base
+  
   build-depends:       base >= 3 && <= 5
                      , containers
                      , convertible == 1.0.*

@@ -10,13 +10,14 @@ import Control.Monad.Identity hiding (forM_)
 import Data.Convertible
 import Data.Data
 import Data.Label
+import Data.Label.Util
 
 import Data.Foldable hiding (concat)
 import qualified Data.Generics.Builders as BS
 import Data.Maybe
 
 import DB.Flex.Monad
-import DB.Flex.Record hiding (forM_)
+import DB.Flex.Record
 import DB.Flex.Query.Ontology
 import DB.Flex.Query.Typed 
 import qualified Data.Map as M

@@ -5,9 +5,9 @@
 module DB.Flex.Query.Ancestry where
 
 import Data.Convertible
+import Data.Label.Util
 import DB.Flex.Monad
 import DB.Flex.Record
-import DB.Flex.Query.Ontology
 import DB.Flex.Query.Typed
 import GHC.Prim
 
@@ -25,13 +25,19 @@ class (Eq (JoinKey t), RecordSelector t, RecordSelector (ParentTable t)) => Chil
 children :: ChildSelector t => Query i l (ParentTable t (SingleExpr l)) -> Query i l (t (SingleExpr l))
 children q =
   do par <- q
-     child <- table
+     chd <- table
      let (Conj from to) = parentJoin
-     restrict (par |.| from .==. child |.| to)
-     return child
+     restrict (par |.| from .==. chd |.| to)
+     return chd
 
-record :: forall a. (SelectAggr' a ~ Single, PrimarySelector (SelectTable a), SelectRecord a) => RecordKey (SelectTable a) -> a
-record v = selectRecord' $ tableSieve $ \tab -> con v .==. tab |.| keyField
+infixl 5 *->
+infixl 3 *+>
+
+child :: ChildSelector t => Query i l (ParentTable t (SingleExpr l)) -> RecordKey t -> Query i l (t (SingleExpr l))
+child q k = sieve (\tab -> tab |.| keyField .==. constant k) (children q)
+
+(*->) :: ChildSelector t => Query i l (ParentTable t (SingleExpr l)) -> RecordKey t -> Query i l (t (SingleExpr l))
+(*->) = child
 
 withParent :: (MeetAggr Single i ~ i, MeetType Value r ~ r, ChildSelector t)
            => Query i l (ParentTable t (SingleExpr l)) -> Query i l (t (Exp r i l)) -> Query i l (t (Exp r i l))
@@ -40,6 +46,16 @@ withParent p q =
      qr <- q
      let (Conj from to) = parentJoin
      return $ to |->| pr |.| from $ qr
+
+(*+>) :: (MeetAggr Single i ~ i, MeetType Value r ~ r, ChildSelector t)
+      => Query i l (ParentTable t (SingleExpr l)) -> Query i l (t (Exp r i l)) -> Query i l (t (Exp r i l))
+(*+>) = withParent
+
+
+-- | Type-class trick to do child-selection as a multivariate funtion.
+
+record :: forall a. (SelectAggr' a ~ Single, PrimarySelector (SelectTable a), SelectRecord a) => RecordKey (SelectTable a) -> a
+record v = selectRecord' $ tableSieve $ \tab -> con v .==. tab |.| keyField
 
 type family SelectSingle (a :: *) :: Constraint
 type instance SelectSingle (a -> r) = SelectSingle r
