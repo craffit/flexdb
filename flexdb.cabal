@@ -20,6 +20,7 @@ Library
                       
                       DB.Flex
                       DB.Flex.Config
+                      DB.Flex.Create
                       DB.Flex.Monad
                       DB.Flex.Query
                       DB.Flex.Query.Ancestry
