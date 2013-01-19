@@ -1,4 +1,4 @@
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections, TemplateHaskell #-}
 module DB.Flex.Config where
 
 import Data.List

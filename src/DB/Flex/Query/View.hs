@@ -1,7 +1,7 @@
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, TypeOperators, KindSignatures
            , OverlappingInstances, ScopedTypeVariables, FlexibleInstances, FlexibleContexts
            , UndecidableInstances, TypeSynonymInstances, TupleSections, GADTs, TypeFamilies
-           , Rank2Types, RecursiveDo, ImpredicativeTypes, DataKinds, PolyKinds #-}
+           , Rank2Types, ImpredicativeTypes, DataKinds, PolyKinds #-}
 module DB.Flex.Query.View where
 
 import Control.Arrow
@@ -53,9 +53,9 @@ data ViewField a t where
 
 data FieldType t v where
   Empty :: FieldType t ()
-  Base  :: Convertible x SqlValue => t |> x -> FieldType t x
+  Base  :: Convertible x SqlValue => t :> x -> FieldType t x
   Join  :: (TableView o, Ord x, Convertible x SqlValue, Convertible SqlValue x) =>
-         { join      :: (t >< ViewTable o) x
+         { fieldJoin :: (t :><: ViewTable o) x
          , relation  :: Relation o fv
          , creation  :: Creation (ViewTable o) o
          } -> FieldType t fv
@@ -82,17 +82,17 @@ infix 5 |+, |=, |?
 (|+) :: a :-> v -> FieldType t v -> ViewField a t
 to |+ aggr = ViewField to aggr NoDefault
 
-(|=) :: Convertible v SqlValue => a :-> v -> t |> v -> ViewField a t
+(|=) :: Convertible v SqlValue => a :-> v -> t :> v -> ViewField a t
 to |= from = ViewField to (Base from) NoDefault
 
-(|?) :: Convertible v SqlValue => a :-> v -> t |> v -> ViewField a t
+(|?) :: Convertible v SqlValue => a :-> v -> t :> v -> ViewField a t
 to |? from = ViewField to (Base from) Default
 
 foldrM' :: Monad m => b -> [a] -> (a -> b -> m b) -> m b
 foldrM' b l f = foldrM f b l
 
 -- | Generic function for querying views. Will aggregate all appropriate data as specified in the viewQuery from TableView
-performViewQuery :: forall a i. (AggrVal (IAggr i), TableView a)
+performViewQuery :: forall a i. (AggrVal i, TableView a)
                  => Query i Z (ViewTable a (Expr i Z)) -> Db [(ViewTable a Identity, a)]
 performViewQuery q =
    do dat <- query' q
@@ -195,7 +195,7 @@ baseView = ViewQuery id []
 -}
 
 -- | Query a table and marshal using TableView
-queryView :: (AggrVal (IAggr i), TableView a) => Query i Z (ViewTable a (Expr i Z)) -> Db [a]
+queryView :: (AggrVal i, TableView a) => Query i Z (ViewTable a (Expr i Z)) -> Db [a]
 queryView = fmap (map snd) . performViewQuery
 
 -- | Query all elements of a table
@@ -245,7 +245,7 @@ data Ignore = Ignore
 -- on the type. 
 class (Typeable v, Data v, Eq v) => FieldJoin t' x m c v where
   mkFieldJoin :: (Ord x, Convertible x SqlValue, Convertible SqlValue x) 
-              => (t >< t') x -> m -> c -> FieldType t v
+              => (t :><: t') x -> m -> c -> FieldType t v
 
 instance FieldJoin t' x m c () where mkFieldJoin _ _ _ = Empty
 instance FieldJoin t' x Parent      Create () where mkFieldJoin _ _ _ = Empty

@@ -29,6 +29,8 @@ Library
                       DB.Flex.Query.Typed
                       DB.Flex.Query.View
                       DB.Flex.Record
+                      
+                      Language.Haskell.TH.Util
 
   other-modules:     DB.Flex.Query.Base
   
@@ -45,7 +47,7 @@ Library
                      , safe == 0.3.*
                      , syb ==0.3.*
                      , tagged 
-                     , template-haskell == 2.8.*
+                     , template-haskell
                      , time
                      , uuid
                      , transformers-base == 0.4.*

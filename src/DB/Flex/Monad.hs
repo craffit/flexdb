@@ -40,7 +40,6 @@ import Control.Exception
 import Control.Monad.Base
 import Control.Monad.Cont
 import Control.Monad.Error
-import Control.Monad.Fix
 import Control.Monad.List
 import Control.Monad.RWS
 import Control.Monad.Reader

@@ -59,11 +59,11 @@ data BaseQuery =
     , _offset   :: Maybe Int
     , _unique   :: Bool
     , _group    :: [BaseExpr String]
-    , _order    :: [BaseExpr String]
-    , _for      :: Maybe String
+    , _order    :: [BaseExpr String] 
+    , _for      :: Maybe String 
     }
 
-$(mkLabels [''BaseQuery])
+$( mkLabel ''BaseQuery )
 
 renderQuery :: Bool -> BaseQuery -> BaseExpr [String] -> BaseExpr String
 renderQuery aggr bq project =
@@ -132,7 +132,8 @@ renderDelete bq tab res =
             ]
 
 runBaseExpr :: BaseExpr String -> Db [[SqlValue]]
-runBaseExpr = (\v -> unsafeIOToDb (print $ v) >> uncurry querySql v) . flip runState []
+runBaseExpr = uncurry querySql . flip runState [] 
+--runBaseExpr = (\v -> unsafeIOToDb (print $ v) >> uncurry querySql v) . flip runState []
 
 baseQuery :: Bool -> BaseQuery -> BaseExpr [String] -> Db [[SqlValue]]
 baseQuery aggr bq proj = runBaseExpr (renderQuery aggr bq proj)

@@ -2,9 +2,10 @@
 module DB.Flex.Create where
 
 import Data.Char
-import Data.Label.Util
 import Data.Maybe
 import Database.HDBC
+
+import Data.Label.Util
 
 import DB.Flex.Config
 import DB.Flex.Monad
@@ -15,20 +16,23 @@ import Language.Haskell.TH.Util
 
 data FieldOpt a where
   Nullable :: FieldOpt (Maybe a)
-  Default  :: a -> FieldOpt a
+--  Default  :: a -> FieldOpt a
   Primary  :: FieldOpt a
   Unique   :: FieldOpt a
-  Foreign  :: DBTable t => t |> a -> FieldOpt a
+  Foreign  :: DBTable t => t :> a -> FieldOpt a
 
 data FieldOpts a = FieldOpts { fieldOpts :: [FieldOpt a] }
 
 -- | Generate table instance from a datatype
 
 mkTable :: (String -> String) -> Name -> Q [Dec]
-mkTable f = withTyConReify $ mkTable' f
+mkTable f n = 
+  do rec  <- dbRecord n 
+     inst <- mkTableFields f (head rec)
+     return $ rec ++ inst
 
-mkTable' :: (String -> String) -> Dec -> Q [Dec]
-mkTable' mkId (DataD _ tnm pars [RecC cns fs] _) =
+mkTableFields :: (String -> String) -> Dec -> Q [Dec]
+mkTableFields mkId (DataD _ tnm pars [RecC cns fs] _) =
      let ps = reverse $ tail $ reverse $ map getTV pars
          fieldNs = map (\(n,_,_) -> mkId (show n)) fs 
          inst = InstanceD [] (ConT (mkName "Functor1") `AppT` (foldl AppT (ConT tnm) $ map VarT ps))
@@ -37,7 +41,7 @@ mkTable' mkId (DataD _ tnm pars [RecC cns fs] _) =
                        [Clause [] (NormalB $ foldl AppE (ConE cns) $ map (AppE (ConE $ mkName "FieldName") . LitE . StringL) fieldNs) []]
                    ]
      in return $ [ inst ]
-mkTable' _ _ = error "Not a valid datatype in mkTable'"
+mkTableFields _ _ = error "Not a valid datatype in mkTableFields"
 
 -- | Generate a table datatype from a remote Postgres database
 

@@ -48,6 +48,6 @@ class Queryable a where
   filterQuery :: a -> QueryTable a (SingleExpr l) -> Query i l (QueryTable a (SingleExpr l))
 
 fieldFilter :: (DBTable t, Eq x, Convertible x SqlValue) 
-            => a :-> x -> t |> x -> a 
+            => a :-> x -> t :> x -> a 
             -> t (SingleExpr l) -> Query i l (t (SingleExpr l))
 fieldFilter vField dField v = sieve (\tab -> tab |.| dField .==. constant (v |.| vField)) . return

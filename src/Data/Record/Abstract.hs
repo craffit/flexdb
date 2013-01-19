@@ -1,5 +1,6 @@
+{-# OPTIONS -fno-warn-orphans #-}
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, TemplateHaskell
-           , StandaloneDeriving, KindSignatures, FlexibleInstances #-}
+           , StandaloneDeriving, KindSignatures, FlexibleInstances, CPP #-}
 module Data.Record.Abstract where
 
 import Control.Monad.Identity
@@ -111,7 +112,11 @@ mkAbstractType' (DataD ctx tnm pars cons _) =
            let (cnm, tps) = getCons con
            in Clause [ConP (aName cnm) $ map VarP $ take (length tps) names]
                      (NormalB $ foldl AppE (ConE cnm) $ map (AppE (VarE (mkName "runIdentity")) . VarE) $ take (length tps) names) []
+#if __GLASGOW_HASKELL__==706
      return [ DataD ctx (aName tnm) (pars ++ [KindedTV f $ AppT (AppT ArrowT StarT) StarT]) (map mkCons cons) []
+#else
+     return [ DataD ctx (aName tnm) (pars ++ [KindedTV f $ ArrowK StarK StarK]) (map mkCons cons) []
+#endif
             , InstanceD []
                 (ConT (mkName "AbstractType") `AppT` appType tnm parNames `AppT` appType (aName tnm) parNames)
                 [ FunD (mkName "toAbstract") (map toClause cons)

@@ -1,6 +1,6 @@
 {-# LANGUAGE TypeFamilies, MultiParamTypeClasses, ScopedTypeVariables, FlexibleContexts
            , TypeOperators, EmptyDataDecls, TypeSynonymInstances, FlexibleInstances
-           , Rank2Types, FunctionalDependencies, UndecidableInstances, DataKinds
+           , Rank2Types, FunctionalDependencies, UndecidableInstances
            , ConstraintKinds, GADTs #-}
 module DB.Flex.Query.Ancestry where
 
@@ -11,16 +11,20 @@ import DB.Flex.Record
 import DB.Flex.Query.Typed
 import GHC.Prim
 
+
 class (DBTable t, Eq (RecordKey t), Convertible (RecordKey t) SqlValue) => RecordSelector t where
   type RecordKey t :: *
-  keyField :: t |> RecordKey t
+  keyField :: t :> RecordKey t
+
 
 class RecordSelector t => PrimarySelector t
- 
+
+
 class (Eq (JoinKey t), RecordSelector t, RecordSelector (ParentTable t)) => ChildSelector t where
   type ParentTable t :: (* -> *) -> *
   type JoinKey t :: *
-  parentJoin :: (ParentTable t >< t) (JoinKey t)
+  parentJoin :: (ParentTable t :><: t) (JoinKey t)
+
 
 children :: ChildSelector t => Query i l (ParentTable t (SingleExpr l)) -> Query i l (t (SingleExpr l))
 children q =
@@ -63,9 +67,9 @@ type instance SelectSingle (Query i l (t (Expr i' l))) = i' ~ Single
 
 class SelectSingle a => SelectRecord a where
   type SelectTable  a :: (* -> *) -> *
-  type SelectAggr   a :: VAggr
-  type SelectLevel  a :: L
-  type SelectAggr'  a :: VAggr
+  type SelectAggr   a :: *
+  type SelectLevel  a :: *
+  type SelectAggr'  a :: *
   selectRecord' :: Query (SelectAggr a) (SelectLevel a) (SelectTable a (Expr (SelectAggr' a) (SelectLevel a))) -> a
 
 instance i' ~ Single => SelectRecord (Query i l (t (Expr i' l))) where

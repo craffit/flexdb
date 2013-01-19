@@ -1,7 +1,7 @@
 {-# OPTIONS -fno-warn-orphans #-}
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, TypeOperators, KindSignatures
            , OverlappingInstances, ScopedTypeVariables, FlexibleInstances, FlexibleContexts
-           , UndecidableInstances, TypeSynonymInstances, TupleSections, DataKinds, PolyKinds, TypeFamilies
+           , UndecidableInstances, TypeSynonymInstances, TupleSections, TypeFamilies
            , TemplateHaskell, EmptyDataDecls, Rank2Types #-}
 module DB.Flex.Query.Typed
    ( query, insert, update, delete
@@ -27,8 +27,11 @@ module DB.Flex.Query.Typed
    
    , query', insert', update', delete'
    
-   , Query, Exp, Expr, InsertExpr, SortExpr, UpdateExpr, ConstantExpr, SingleExpr, AggrExpr     
-   , VType(..), VAggr(..), SubAggr(..), L(..), AggrVal, IAggr, MeetAggr, MeetType
+   , Query, Exp, Expr, InsertExpr, SortExpr, UpdateExpr, ConstantExpr, SingleExpr, AggrExpr
+   
+   , Insert, Value, Sort, Update, Constant, Single, Aggr, Z, Sub
+   
+   , AggrVal, MeetAggr, MeetType
    
    ) where
 
@@ -64,69 +67,67 @@ instance Convertible SqlValue UUID where
        maybe (convError "Error converting String to UUID in Data.UUID.Instances." sql) return uid
 
 
--- | Expression types
-data VType = Insert | Value | Sort | Update
+-- | Type of queries
+data Insert
+data Value
+data Sort
+data Update
 
-infix 5 \/
+-- | Lattice for query types
+type family MeetType (a :: *) (b :: *) :: *
+type instance MeetType Insert Insert = Insert
+type instance MeetType Value  Value  = Value
+type instance MeetType Sort   Sort   = Sort
+type instance MeetType Update Update = Update
+type instance MeetType Value  Insert = Insert
+type instance MeetType Value  Sort   = Sort
+type instance MeetType Value  Update = Update
+type instance MeetType Insert Value  = Insert
+type instance MeetType Sort   Value  = Sort
+type instance MeetType Update Value  = Update
+type instance MeetType Insert Update = Update
+type instance MeetType Update Insert = Update
 
-type family (\/) (a :: VType) (b :: VType) :: VType
-type instance (\/) Insert Insert = Insert
-type instance (\/) Value  Value  = Value
-type instance (\/) Sort   Sort   = Sort
-type instance (\/) Update Update = Update
-type instance (\/) Value  Insert = Insert
-type instance (\/) Value  Sort   = Sort
-type instance (\/) Value  Update = Update
-type instance (\/) Insert Value  = Insert
-type instance (\/) Sort   Value  = Sort
-type instance (\/) Update Value  = Update
-type instance (\/) Insert Update = Update
-type instance (\/) Update Insert = Update
+-- | Aggregation type of variables/queries
+data Constant
+data Single
+data Aggr
 
-type family MeetType (a :: VType) (b :: VType) :: VType
-type instance MeetType a b = a \/ b
+-- | Query level and parent structure
+data Sub a l
+data Z
 
--- | Aggregation state
-data VAggr   = Constant | Single | Aggr
-data SubAggr = SubV VAggr | None
-data L       = Sub SubAggr L | Z
+-- data L       = Sub SubAggr L | Z
 
-infix 5 \|/
+-- | Lattice for aggregation types
+type family MeetAggr (a :: *) (b :: *) :: *
+type instance MeetAggr Constant Constant = Constant
+type instance MeetAggr Constant Single   = Single
+type instance MeetAggr Single   Constant = Single
+type instance MeetAggr Single   Single   = Single
+type instance MeetAggr Constant Aggr     = Aggr
+type instance MeetAggr Aggr     Constant = Aggr
+type instance MeetAggr Aggr     Aggr     = Aggr
 
-type family (\|/) (a :: VAggr) (b :: VAggr) :: VAggr
-type instance (\|/) Constant Constant = Constant
-type instance (\|/) Constant Single   = Single
-type instance (\|/) Single   Constant = Single
-type instance (\|/) Single   Single   = Single
-type instance (\|/) Constant Aggr     = Aggr
-type instance (\|/) Aggr     Constant = Aggr
-type instance (\|/) Aggr     Aggr     = Aggr
-
-type family MeetAggr (a :: VAggr) (b :: VAggr) :: VAggr
-type instance MeetAggr a b = a \|/ b
-
-data ConstantI
-data SingleI
-data AggrI
-
-type family IAggr (v :: VAggr) :: *
-type instance IAggr Constant = ConstantI
-type instance IAggr Single   = SingleI
-type instance IAggr Aggr     = AggrI
-
+-- | Term-level representation of agregation types
 class AggrVal v where isAggr :: Proxy v -> Bool
-instance AggrVal ConstantI where isAggr _ = False
-instance AggrVal SingleI   where isAggr _ = False
-instance AggrVal AggrI     where isAggr _ = True
+instance AggrVal Constant where isAggr _ = False
+instance AggrVal Single   where isAggr _ = False
+instance AggrVal Aggr     where isAggr _ = True
 
-newtype Exp (a :: VType) (i :: VAggr) (l :: L) t = Exp { _bExp :: State Int (BaseExpr String) }
+-- | Expression with phantom types: Querytype, aggregation type, level of toccurrence, type
+newtype Exp a i l t = Exp { bExp :: State Int (BaseExpr String) }
 
-$( mkLabels [''Exp] )
+{-
+setExp :: State Int (BaseExpr String) -> Exp a i l t -> Exp a i l t
+setExp s e = e { bExp = s }
+-}
 
 -- Haskell-level function!
 expEquals :: String -> Exp x i l a -> Bool
-expEquals s = (== s) . fst . flip runState [] . fst . flip runState 0 . get bExp
+expEquals s = (== s) . fst . flip runState [] . fst . flip runState 0 . bExp
 
+-- | Short-hands for most occurring types
 type Expr         = Exp Value
 type InsertExpr i = Exp Insert i Z
 type SortExpr     = Exp Sort
@@ -137,17 +138,14 @@ type SingleExpr   = Exp Value Single
 type AggrExpr     = Exp Value Aggr
 
 type Alias      = Int
-data QState (t :: VAggr) (l :: L)
-                 = QState { _alias :: Alias
-                          , _build :: BaseQuery
-                          }
+data QState t l = QState { alias :: Alias
+                         , build :: BaseQuery
+                         }
 
-$( mkLabels [''QState] )
-
-type Query (t :: VAggr) (l :: L) a    = State (QState t l) a
+type Query t l a    = State (QState t l) a
 
 castExp :: Exp v i l a -> Exp v' i' l' a'
-castExp = Exp . get bExp
+castExp = Exp . bExp
 
 {-
 castQState :: QState t l -> QState t' l'
@@ -158,16 +156,16 @@ castQuery q = StateT $ fmap (second castQState) . runStateT q . castQState
 -}
 
 newAlias :: Query t l Int
-newAlias = ST.modify (modify alias (+1)) >> gets (get alias)
+newAlias = ST.modify (\(QState a b) -> QState (a + 1) b) >> gets alias
 
 updateBaseQuery :: (BaseQuery -> BaseQuery) -> Query t l ()
-updateBaseQuery = ST.modify . modify build
+updateBaseQuery f = ST.modify $ \(QState a b) -> QState a (f b)
 
 runExp :: State Int (BaseExpr String) -> Query i' l' (BaseExpr String)
 runExp e =
   do st <- ST.get
-     let (ex, a) = runState e (get alias st)
-     put (set alias a st)
+     let (ex, a) = runState e (alias st)
+     put (st { alias = a })
      return ex
 
 
@@ -175,7 +173,7 @@ runQueryAlias :: Int -> Query i l a -> (a, QState i l)
 runQueryAlias a = flip runState (QState a $ BaseQuery [] (return "true") (return "true") Nothing Nothing False [] [] Nothing)
 
 runQuery :: Query i l a -> (a, BaseQuery)
-runQuery = second (get build) . runQueryAlias 0
+runQuery = second build . runQueryAlias 0
 
 runSubQuery :: Query i l a -> Query i' l' (a, BaseQuery)
 runSubQuery q =
@@ -196,21 +194,26 @@ runExpQuery q =
 restrict :: SingleExpr l Bool -> Query i l ()
 restrict (Exp e) = runExp e >>= updateBaseQuery . modify B.restrict . B.binOp "AND"
 
+-- | Having only works on aggregated expessions
 having :: AggrExpr l Bool -> Query Aggr l ()
 having (Exp e) = runExp e >>= updateBaseQuery . modify B.having . B.binOp "AND"
 
+-- | Data-base version of filter
 sieve :: (t (SingleExpr l) -> SingleExpr l Bool) -> Query i l (t (SingleExpr l)) -> Query i l (t (SingleExpr l))
 sieve p v =
   do x <- v
      restrict $ p x
      return x
 
+-- | Fore unique query
 unique :: Query i l ()
 unique = updateBaseQuery $ set B.unique True
 
+-- | Select query 'for update', does not work on aggreagted expressions
 forUpdate :: Query Single l ()
 forUpdate = updateBaseQuery $ set B.for (Just "update")
 
+-- | Select query 'for share' locking
 forShare :: Query Single l ()
 forShare = updateBaseQuery $ set B.for (Just "share")
 
@@ -235,74 +238,75 @@ tableSieve p = sieve p table
 fieldList :: DBRecord r => r a -> r FieldName
 fieldList r = distribute (\_ v -> FieldName $ "v" ++ show v) [(1 :: Int)..] r
 
--- | Project a list of values
+-- | Project a list of values (NOTE: this may lead to postgre type-inference problems)
 values :: (DBRecord r, AbstractType t r) => [t] -> Query i l (r (SingleExpr l))
 values [] = error "Cannot construct values for an empty list"
 values dat =
    let vs = parens $ return "values" <-> fmap (intercalate ", ") (mapM (list . mapM B.value . recordValues . toAbstract) dat)
    in projectQuery vs (fieldList $ toAbstract $ head dat)
 
+-- | Insert a list of singular values
 singleValues :: ( AbstractType (AbstractVal x Identity) (AbstractVal x)
                 , Convertible SqlValue x, Convertible x SqlValue)
              => [x] -> Query Single l (SingleExpr l x)
 singleValues = fmap (get realVal) . values . map (AbstractVal . Identity)
 
-renderSubQuery :: forall i j r l i'. (AggrVal (IAggr i), DBRecord r) 
+renderSubQuery :: forall i j r l i'. (AggrVal i, DBRecord r) 
                => Query i (Sub j l) (r (Expr i (Sub j l))) -> Query i' l (r (Expr i (Sub j l)), BaseExpr String)
 renderSubQuery q =
   do (rec, bq) <- runSubQuery q
-     exps <- mapM runExp (collect (get bExp) rec)
-     let aggr = isAggr (Proxy :: Proxy (IAggr i))
+     exps <- mapM runExp (collect bExp rec)
+     let aggr = isAggr (Proxy :: Proxy i)
          be' = renderQuery aggr bq (sequence exps)
      return (rec, be')
 
-renderSubExp :: forall i j r l. (DBRecord r, AggrVal (IAggr i)) 
-      => Query i (Sub (SubV j) l) (r (Expr i (Sub (SubV j) l)))
-      -> State Int (r (Expr i (Sub (SubV j) l)), BaseExpr String)
+renderSubExp :: forall i j r l. (DBRecord r, AggrVal i) 
+      => Query i (Sub j l) (r (Expr i (Sub j l)))
+      -> State Int (r (Expr i (Sub j l)), BaseExpr String)
 renderSubExp q =
   do (rec, bq) <- runExpQuery q
-     exps <- sequence (collect (get bExp) rec)
-     let aggr = isAggr (Proxy :: Proxy (IAggr i))
+     exps <- sequence (collect bExp rec)
+     let aggr = isAggr (Proxy :: Proxy i)
          be' = renderQuery aggr bq (sequence exps)
      return (rec, be')
 
-select :: forall i r l i'. (AggrVal (IAggr i), DBRecord r) => Query i (Sub None l) (r (Expr i (Sub None l))) -> Query i' l (r (SingleExpr l))
+select :: forall i r l i'. (AggrVal i, DBRecord r) => Query i (Sub i' l) (r (Expr i (Sub i' l))) -> Query i' l (r (SingleExpr l))
 select q = renderSubQuery q >>= \(rec,be) -> projectQuery be (fieldList rec)
 
-binQ :: (AggrVal (IAggr i), AggrVal (IAggr i'), DBRecord r) 
-      => String -> Query i (Sub None l) (r (Expr i (Sub None l))) 
-                -> Query i' (Sub None l) (r (Expr i' (Sub None l))) 
+binQ :: (AggrVal i, AggrVal i', DBRecord r) 
+      => String -> Query i (Sub i'' l) (r (Expr i (Sub i'' l))) 
+                -> Query i' (Sub i'' l) (r (Expr i' (Sub i'' l))) 
                 -> Query i'' l (r (SingleExpr l))
 binQ op q1 q2 =
   do (rec, be1) <- renderSubQuery q1
      (_, be2)   <- renderSubQuery q2
      projectQuery (parens $ parens be1 <-> return op <-> parens be2) (fieldList rec)
 
-union :: (AggrVal (IAggr i), AggrVal (IAggr i'), DBRecord r) 
-      => Query i (Sub None l) (r (Expr i (Sub None l))) 
-      -> Query i' (Sub None l) (r (Expr i' (Sub None l))) 
+union :: (AggrVal i, AggrVal i', DBRecord r) 
+      => Query i (Sub i'' l) (r (Expr i (Sub i'' l))) 
+      -> Query i' (Sub i'' l) (r (Expr i' (Sub i'' l))) 
       -> Query i'' l (r (SingleExpr l))
 union = binQ "union"
 
-unionAll :: (AggrVal (IAggr i), AggrVal (IAggr i'), DBRecord r) 
-      => Query i (Sub None l) (r (Expr i (Sub None l))) 
-      -> Query i' (Sub None l) (r (Expr i' (Sub None l))) 
+unionAll :: (AggrVal i, AggrVal i', DBRecord r) 
+      => Query i (Sub i'' l) (r (Expr i (Sub i'' l))) 
+      -> Query i' (Sub i'' l) (r (Expr i' (Sub i'' l))) 
       -> Query i'' l (r (SingleExpr l))
 unionAll = binQ "union all"
 
-intersect :: (AggrVal (IAggr i), AggrVal (IAggr i'), DBRecord r) 
-      => Query i (Sub None l) (r (Expr i (Sub None l))) 
-      -> Query i' (Sub None l) (r (Expr i' (Sub None l))) 
+intersect :: (AggrVal i, AggrVal i', DBRecord r) 
+      => Query i (Sub i'' l) (r (Expr i (Sub i'' l))) 
+      -> Query i' (Sub i'' l) (r (Expr i' (Sub i'' l))) 
       -> Query i'' l (r (SingleExpr l))
 intersect = binQ "intersect"
 
-except :: (AggrVal (IAggr i), AggrVal (IAggr i'), DBRecord r) 
-      => Query i (Sub None l) (r (Expr i (Sub None l))) 
-      -> Query i' (Sub None l) (r (Expr i' (Sub None l))) 
+except :: (AggrVal i, AggrVal i', DBRecord r) 
+      => Query i (Sub i'' l) (r (Expr i (Sub i'' l))) 
+      -> Query i' (Sub i'' l) (r (Expr i' (Sub i'' l))) 
       -> Query i'' l (r (SingleExpr l))
 except = binQ "except"
 
-scope :: Expr i l a -> ConstantExpr (Sub (SubV i) l) a
+scope :: Expr i l a -> ConstantExpr (Sub i l) a
 scope = castExp
 
 group :: SingleExpr l a -> Query Aggr l (AggrExpr l a)
@@ -318,16 +322,16 @@ groupAll = traverse1 group
 -- Expressions
 -----------------------------------------------------------
 unOp :: String -> Expr i l t -> Expr i l t'
-unOp op = Exp . fmap (B.unOp op) . get bExp
+unOp op = Exp . fmap (B.unOp op) . bExp
 
 postOp :: String -> Expr i' l t -> Expr i' l t'
-postOp op = Exp . fmap (B.postOp op) . get bExp
+postOp op = Exp . fmap (B.postOp op) . bExp
 
 binOp :: String -> Expr i l t -> Expr i' l t' -> Expr i'' l t''
 binOp op (Exp e1) (Exp e2) = Exp $ B.binOp op <$> e1 <*> e2
 
 class Args a where arg_ :: String -> [State Int (BaseExpr String)] -> a
-instance Args tail => Args (Exp Value i l t -> tail) where arg_ name exprs = arg_ name . (:exprs) . get bExp
+instance Args tail => Args (Exp Value i l t -> tail) where arg_ name exprs = arg_ name . (:exprs) . bExp
 instance Args (Exp Value i l t)                      where arg_ name exprs = Exp $ B.func name . sequence <$> sequence (reverse exprs)
 
 func :: (Args a) => String -> a
@@ -343,23 +347,23 @@ infixr  2 .||.
 
 
 -- | Equality comparison on Exprs, = in SQL.
-(.==.) :: Eq a => Expr i l a -> Expr i' l a -> Expr (i \|/ i') l Bool
+(.==.) :: Eq a => Expr i l a -> Expr i' l a -> Expr (MeetAggr i i') l Bool
 (.==.) = binOp "="
 
 -- | Inequality on Exprs, <> in SQL.
-(.<>.) :: Eq a => Expr i l a -> Expr i' l a -> Expr (i \|/ i') l Bool
+(.<>.) :: Eq a => Expr i l a -> Expr i' l a -> Expr (MeetAggr i i') l Bool
 (.<>.) = binOp "<>"
 
-(.<.) :: Ord a => Expr i l a -> Expr i' l a -> Expr (i \|/ i') l Bool
+(.<.) :: Ord a => Expr i l a -> Expr i' l a -> Expr (MeetAggr i i') l Bool
 (.<.)  = binOp "<"
 
-(.<=.) :: Ord a => Expr i l a -> Expr i' l a -> Expr (i \|/ i') l Bool
+(.<=.) :: Ord a => Expr i l a -> Expr i' l a -> Expr (MeetAggr i i') l Bool
 (.<=.) = binOp "<="
 
-(.>.) :: Ord a => Expr i l a -> Expr i' l a -> Expr (i \|/ i') l Bool
+(.>.) :: Ord a => Expr i l a -> Expr i' l a -> Expr (MeetAggr i i') l Bool
 (.>.)  = binOp ">"
 
-(.>=.) :: Ord a => Expr i l a -> Expr i' l a -> Expr (i \|/ i') l Bool
+(.>=.) :: Ord a => Expr i l a -> Expr i' l a -> Expr (MeetAggr i i') l Bool
 (.>=.) = binOp ">="
 
 -- | The inverse of an Expr Bool.
@@ -367,23 +371,23 @@ _not :: Expr i l Bool -> Expr i l Bool
 _not = unOp "NOT"
 
 -- | \"Logical and\" on 'Expr', AND in SQL.
-(.&&.) :: Expr i l Bool -> Expr i' l Bool -> Expr (i \|/ i') l Bool
+(.&&.) :: Expr i l Bool -> Expr i' l Bool -> Expr (MeetAggr i i') l Bool
 (.&&.) = binOp "AND"
 
 -- | \"Logical or\" on 'Expr'. OR in SQL.
-(.||.) :: Expr i l Bool -> Expr i' l Bool -> Expr (i \|/ i') l Bool
+(.||.) :: Expr i l Bool -> Expr i' l Bool -> Expr (MeetAggr i i') l Bool
 (.||.) = binOp "OR"
 
-like :: Expr i l String -> Expr i' l String -> Expr (i \|/ i') l Bool
+like :: Expr i l String -> Expr i' l String -> Expr (MeetAggr i i') l Bool
 like   = binOp "LIKE"
 
 
 -- | Produces the concatenation of two String-expressions.
-cat :: Expr i l String -> Expr i' l String -> Expr (i \|/ i') l String
+cat :: Expr i l String -> Expr i' l String -> Expr (MeetAggr i i') l String
 cat = binOp "||"
 
 -- | Concatenates two String-expressions.
-(.++.) :: Expr i l String -> Expr i' l String -> Expr (i \|/ i') l String
+(.++.) :: Expr i l String -> Expr i' l String -> Expr (MeetAggr i i') l String
 (.++.) = cat
 
 -- | Gets the length of a string.
@@ -391,19 +395,19 @@ _length :: Expr i l String -> Expr i l Int
 _length = func "char_length"
 
 -- | Addition
-(.+.) :: Num a => Expr i l a -> Expr i' l a -> Expr (i \|/ i') l a
+(.+.) :: Num a => Expr i l a -> Expr i' l a -> Expr (MeetAggr i i') l a
 (.+.) = binOp "+"
 -- | Subtraction
-(.-.) :: Num a => Expr i l a -> Expr i' l a -> Expr (i \|/ i') l a
+(.-.) :: Num a => Expr i l a -> Expr i' l a -> Expr (MeetAggr i i') l a
 (.-.) = binOp "-"
 -- | Multiplication
-(.*.) :: Num a => Expr i l a -> Expr i' l a -> Expr (i \|/ i') l a
+(.*.) :: Num a => Expr i l a -> Expr i' l a -> Expr (MeetAggr i i') l a
 (.*.) = binOp "*"
 -- | Division
-(./.) :: Num a => Expr i l a -> Expr i' l a -> Expr (i \|/ i') l a
+(./.) :: Num a => Expr i l a -> Expr i' l a -> Expr (MeetAggr i i') l a
 (./.) = binOp "/"
 -- | Modulo
-(.%.) :: Num a => Expr i l a -> Expr i' l a -> Expr (i \|/ i') l a
+(.%.) :: Num a => Expr i l a -> Expr i' l a -> Expr (MeetAggr i i') l a
 (.%.) = binOp "%"
 
 -- | Returns true if the expression is Null.
@@ -415,23 +419,23 @@ isNull  = postOp "ISNULL"
 notNull :: Expr i l a -> Expr i l Bool
 notNull = postOp "NOTNULL"
 
-exists :: (DBRecord r, AggrVal (IAggr i)) 
-      => Query i (Sub (SubV j) l) (r (Expr i (Sub (SubV j) l)))
+exists :: (DBRecord r, AggrVal i) 
+      => Query i (Sub j l) (r (Expr i (Sub j l)))
       -> Expr j l Bool
 exists q = unOp "exists" $ Exp $ snd <$> renderSubExp q
 
 _in :: (Convertible a SqlValue, Eq a) => Expr j l a -> [a] -> Expr j l Bool
 _in (Exp e) dat = Exp $ (\ex -> ex <-> return "in" <-> parens (fmap (intercalate ", ") (mapM (B.value . toSql) dat))) <$> e
 
-_in' :: (AggrVal (IAggr i), Eq a, Convertible SqlValue a, Convertible a SqlValue)
+_in' :: (AggrVal i, Eq a, Convertible SqlValue a, Convertible a SqlValue)
       => Expr j l a
-      -> Query i (Sub (SubV j) l) (Expr i (Sub (SubV j) l) a)
+      -> Query i (Sub j l) (Expr i (Sub j l) a)
       -> Expr j l Bool
 _in' e q = binOp "in" e $ Exp $ fmap snd $ renderSubExp (fmap AbstractVal q)
 
-notin :: (AggrVal (IAggr i), Eq a, Convertible SqlValue a, Convertible a SqlValue)
+notin :: (AggrVal i, Eq a, Convertible SqlValue a, Convertible a SqlValue)
       => Expr j l a
-      -> Query i (Sub (SubV j) l) (Expr i (Sub (SubV j) l) a)
+      -> Query i (Sub j l) (Expr i (Sub j l) a)
       -> Expr j l Bool
 notin e q = binOp "not in" e $ Exp $ fmap snd $ renderSubExp (fmap AbstractVal q)
 
@@ -516,7 +520,7 @@ offset = updateBaseQuery . set B.offset . Just
 data Order = ASC | DESC deriving Show
 
 orderOp :: Ord a => Order -> Expr i l a -> SortExpr i l a
-orderOp op e = Exp $  (<-> return (show op)) <$> get bExp e
+orderOp op e = Exp $  (<-> return (show op)) <$> bExp e
 
 -- | Use this together with the function 'order' to
 -- order the results of a query in ascending order.
@@ -537,42 +541,28 @@ desc = orderOp DESC
 order :: SortExpr i l a -> Query i l ()
 order (Exp e) = runExp e >>= updateBaseQuery . modify B.order . flip (++) . return
 
-{-
-class Castable' (t :: * -> *) (t' :: * -> *) where
-  doCast' :: t v -> t' v
-
-instance Castable' Expr        ProjectExpr where doCast' = doCast
-instance Castable' ProjectExpr ProjectExpr where doCast' = doCast
-instance Castable' Expr        InsertExpr  where doCast' = doCast
-instance Castable' InsertExpr  InsertExpr  where doCast' = doCast
-instance Castable' Expr        UpdateExpr  where doCast' = doCast
-instance Castable' UpdateExpr  UpdateExpr  where doCast' = doCast
-instance Castable' InsertExpr  UpdateExpr  where doCast' = doCast
-
-castAll :: (Functor1 r, Castable' e f) => r e -> r f
-castAll = fmap1 doCast'
--}
-
 infixl 9 |.|
 
+-- | Convenience funtion for using getters
 (|.|) :: a -> (a :-> b) -> b
 r |.| s = get s r
 
 infix 8 |->|
+-- | Convenience function for using setters: includes phantom type cast
 (|->|) :: Functor1 r => (forall f g h. r (Exp f g h) :-> Exp f g h a) 
-       -> Exp t i l a -> r (Exp t' i' l) -> r (Exp (t \/ t') (i \|/ i') l)
+       -> Exp t i l a -> r (Exp t' i' l) -> r (Exp (MeetType t t') (MeetAggr i i') l)
 l |->| v = set l (castExp v) . fmap1 castExp
 
-query' :: forall r i. (DBRecord r, AggrVal (IAggr i)) => Query i Z (r (Expr i Z)) -> Db [r Identity]
+query' :: forall r i. (DBRecord r, AggrVal i) => Query i Z (r (Expr i Z)) -> Db [r Identity]
 query' q =
-  let (rec, bq) = runQuery $ q >>= mapM runExp . collect (get bExp)
-      aggr      = isAggr (Proxy :: Proxy (IAggr i))
+  let (rec, bq) = runQuery $ q >>= mapM runExp . collect bExp
+      aggr      = isAggr (Proxy :: Proxy i)
   in map buildRecord <$> B.baseQuery aggr bq (sequence rec)
 
-insert' :: forall r i. (DBTable r, AggrVal (IAggr i)) => Query i Z (r (InsertExpr i)) -> Db [r Identity]
+insert' :: forall r i. (DBTable r, AggrVal i) => Query i Z (r (InsertExpr i)) -> Db [r Identity]
 insert' q =
-  let (rec, bq) = runQuery $ q >>= mapM runExp . collect (get bExp)
-      aggr      = isAggr (Proxy :: Proxy (IAggr i))
+  let (rec, bq) = runQuery $ q >>= mapM runExp . collect bExp
+      aggr      = isAggr (Proxy :: Proxy i)
       nms       = names (undefined :: r a)
       tname     = tableName (undefined :: r a)
   in map buildRecord <$> B.baseInsert aggr bq tname (zip nms rec)
@@ -581,7 +571,7 @@ update' :: forall t. DBTable t => (t (SingleExpr Z) -> Query Single Z (t UpdateE
 update' qf =
   let tname     = tableName (undefined :: t a)
       q         = qf . fmap1 (Exp . return . return . ((tname ++ ".") ++) . unFieldName) $ fieldNames
-      (rec, bq) = runQuery $ q >>= mapM runExp . collect (get bExp)
+      (rec, bq) = runQuery $ q >>= mapM runExp . collect bExp
       nms       = names (undefined :: t a)
   in map buildRecord <$> B.baseUpdate bq tname (zip nms rec)
 
@@ -592,10 +582,10 @@ delete' qf =
       (_, bq) = runQuery . qf . fmap1 (Exp . return . return . ((tName ++ ".") ++) . unFieldName) $ fieldNames
   in map buildRecord <$> B.baseDelete bq tName tFields
 
-query :: forall r i a. (DBRecord r, AggrVal (IAggr i), AbstractType a r) => Query i Z (r (Expr i Z)) -> Db [a]
+query :: forall r i a. (DBRecord r, AggrVal i, AbstractType a r) => Query i Z (r (Expr i Z)) -> Db [a]
 query = fmap (map fromAbstract) . query'
 
-insert :: forall r i a. (DBTable r, AggrVal (IAggr i), AbstractType a r) => Query i Z (r (InsertExpr i)) -> Db [a]
+insert :: forall r i a. (DBTable r, AggrVal i, AbstractType a r) => Query i Z (r (InsertExpr i)) -> Db [a]
 insert = fmap (map fromAbstract) . insert'
 
 update :: forall t a. (DBTable t, AbstractType a t) => (t (SingleExpr Z) -> Query Single Z (t UpdateExpr)) -> Db [a]
