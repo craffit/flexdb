@@ -65,8 +65,8 @@ data BaseQuery =
 
 $( mkLabel ''BaseQuery )
 
-renderQuery :: Bool -> BaseQuery -> BaseExpr [String] -> BaseExpr String
-renderQuery aggr bq project =
+renderQuery :: BaseQuery -> BaseExpr [String] -> BaseExpr String
+renderQuery bq project =
   fmap (intercalate " ") $ sequence
        [ return "select"
        , return $ if get unique bq then "distinct" else ""
@@ -76,14 +76,13 @@ renderQuery aggr bq project =
            else ("from " ++) . intercalate ", " <$> sequence (get tables bq)
        , return "where"
        , get restrict bq
-       , if aggr
-           then fmap (intercalate " ") $ sequence
-                 [ return "group by"
-                 , intercalate ", " <$> sequence (get group bq)
-                 , return "having"
-                 , get having bq
-                 ]
-           else return ""
+       , if null (get group bq)
+           then return ""
+           else (("group by "++) . intercalate ", ") <$> sequence (get group bq)
+       , do h <- get having bq
+            case h of
+              "true" -> return ""
+              _ -> return $ "having " ++ h
        , return $ maybe "" (\v -> "limit " ++ show v) $ get limit bq
        , return $ maybe "" (\v -> "offset " ++ show v) $ get offset bq
        , if null $ get order bq
@@ -92,13 +91,13 @@ renderQuery aggr bq project =
        , return $ maybe "" ("for " ++) $ get for bq
        ]
 
-renderInsert :: Bool -> BaseQuery -> String -> [(String, BaseExpr String)] -> BaseExpr String
-renderInsert aggr bq tab flds =
+renderInsert :: BaseQuery -> String -> [(String, BaseExpr String)] -> BaseExpr String
+renderInsert bq tab flds =
   let noDefs = filter ((/="DEFAULT") . runExp . snd) flds
   in fmap (intercalate " ") $ sequence
             [ return $ "insert into " ++  tab
             , return $ "(" ++ intercalate "," (map fst noDefs) ++ ")"
-            , renderQuery aggr bq (sequence $ map snd noDefs)
+            , renderQuery bq (sequence $ map snd noDefs)
             , return "returning"
             , return $ intercalate "," (map fst flds)
             ]
@@ -132,14 +131,14 @@ renderDelete bq tab res =
             ]
 
 runBaseExpr :: BaseExpr String -> Db [[SqlValue]]
-runBaseExpr = uncurry querySql . flip runState [] 
---runBaseExpr = (\v -> unsafeIOToDb (print $ v) >> uncurry querySql v) . flip runState []
+-- runBaseExpr = uncurry querySql . flip runState [] 
+runBaseExpr = (\v -> unsafeIOToDb (print $ v) >> uncurry querySql v) . flip runState []
 
-baseQuery :: Bool -> BaseQuery -> BaseExpr [String] -> Db [[SqlValue]]
-baseQuery aggr bq proj = runBaseExpr (renderQuery aggr bq proj)
+baseQuery :: BaseQuery -> BaseExpr [String] -> Db [[SqlValue]]
+baseQuery bq proj = runBaseExpr (renderQuery bq proj)
 
-baseInsert :: Bool -> BaseQuery -> String -> [(String, BaseExpr String)] -> Db [[SqlValue]]
-baseInsert aggr bq tab flds = runBaseExpr (renderInsert aggr bq tab flds)
+baseInsert :: BaseQuery -> String -> [(String, BaseExpr String)] -> Db [[SqlValue]]
+baseInsert bq tab flds = runBaseExpr (renderInsert bq tab flds)
 
 baseUpdate :: BaseQuery -> String -> [(String, BaseExpr String)] -> Db [[SqlValue]]
 baseUpdate bq tab flds = runBaseExpr (renderUpdate bq tab flds)

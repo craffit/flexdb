@@ -92,8 +92,7 @@ foldrM' :: Monad m => b -> [a] -> (a -> b -> m b) -> m b
 foldrM' b l f = foldrM f b l
 
 -- | Generic function for querying views. Will aggregate all appropriate data as specified in the viewQuery from TableView
-performViewQuery :: forall a i. (AggrVal i, TableView a)
-                 => Query i Z (ViewTable a (Expr i Z)) -> Db [(ViewTable a Identity, a)]
+performViewQuery :: forall a i. TableView a => Query i Z (ViewTable a (Expr i Z)) -> Db [(ViewTable a Identity, a)]
 performViewQuery q =
    do dat <- query' q
       let fields :: ViewQuery a (ViewTable a)
@@ -195,7 +194,7 @@ baseView = ViewQuery id []
 -}
 
 -- | Query a table and marshal using TableView
-queryView :: (AggrVal i, TableView a) => Query i Z (ViewTable a (Expr i Z)) -> Db [a]
+queryView :: TableView a => Query i Z (ViewTable a (Expr i Z)) -> Db [a]
 queryView = fmap (map snd) . performViewQuery
 
 -- | Query all elements of a table
