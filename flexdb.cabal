@@ -24,7 +24,6 @@ Library
                       DB.Flex.Monad
                       DB.Flex.Query
                       DB.Flex.Query.Ancestry
-                      DB.Flex.Query.Derived
                       DB.Flex.Query.Ontology
                       DB.Flex.Query.Typed
                       DB.Flex.Query.View
