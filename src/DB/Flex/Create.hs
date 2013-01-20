@@ -1,27 +1,83 @@
-{-# LANGUAGE TemplateHaskell, GADTs, TypeOperators, Rank2Types #-}
+{-# LANGUAGE TemplateHaskell, GADTs, TypeOperators, Rank2Types, ScopedTypeVariables, KindSignatures #-}
 module DB.Flex.Create where
 
+import Control.Monad
+
 import Data.Char
+import Data.List
 import Data.Maybe
+import Data.Proxy
 import Database.HDBC
 
+import Data.Foldable1
+import Data.Zippable1
 import Data.Label.Util
 
 import DB.Flex.Config
 import DB.Flex.Monad
 import DB.Flex.Record
+import DB.Flex.Query.Base
+import DB.Flex.Query
+
 
 import Language.Haskell.TH
 import Language.Haskell.TH.Util
 
-data FieldOpt a where
+import Safe
+
+data FieldOpt a  where
   Nullable :: FieldOpt (Maybe a)
---  Default  :: a -> FieldOpt a
+  NotNull  :: FieldOpt a
+  Def      :: Eq a => a -> FieldOpt a
   Primary  :: FieldOpt a
   Unique   :: FieldOpt a
   Foreign  :: DBTable t => t :> a -> FieldOpt a
+  Type     :: String -> FieldOpt a
+
+instance Eq (FieldOpt a) where
+  Nullable  == Nullable = True
+  NotNull   == NotNull  = True
+  (Def a)   == (Def b)  = a == b
+  Primary   == Primary  = True
+  Unique    == Unique   = True
+  (Foreign (l :: t :> x)) == (Foreign (l' :: t' :> x'))  =
+    let nms  = fieldNames :: t FieldName
+        nms' = fieldNames :: t' FieldName
+    in tableName nms == tableName nms' && unFieldName (nms |.| l) == unFieldName (nms' |.| l')
+  (Type a)  == (Type b) = a == b
+  _ == _ = False
 
 data FieldOpts a = FieldOpts { fieldOpts :: [FieldOpt a] }
+
+renderCreate :: forall a. DBTable a => a FieldOpts -> BaseExpr String
+renderCreate fs =
+  let mkForeign (Foreign (l :: (t :> x))) =
+         let nms = fieldNames :: t FieldName
+         in Just $ "references " ++ tableName nms ++ " (" ++ unFieldName (nms |.| l) ++ ")"
+      mkForeign _ = Nothing
+      renderField nm ops =
+        fmap (intercalate " ") $ sequence
+                    [ return nm
+                    , return $ head $ [ v | Type v <- ops ] ++ [ "text" ]
+                    , return $ if any (==NotNull) ops then "not null" else "null"
+                    , maybe (return "") (liftM ("default " ++) . value . toSql) $ headMay $ [ v | Def v <- ops ]
+                    , return $ if any (==Primary) ops then "primary key" else ""
+                    , return $ if any (==Unique) ops then "unique" else ""
+                    , return $ intercalate " " $ catMaybes $ map mkForeign ops
+                    ]
+  in fmap (intercalate " ") $ sequence
+            [ return $ "create table if not exists " ++ tableName fs ++ " ("
+            , fmap (intercalate ", ") $ sequence $ collect unConstVal 
+                  $ zip1 (\(FieldName nm) (Tup1 Field (FieldOpts ops)) -> ConstVal $ renderField nm ops) fieldNames 
+                  $ zip1 Tup1 recordFields fs
+            , return ")"
+            ]
+
+createTable :: forall a . DBTable a => a FieldOpts -> Db ()
+createTable = fmap (const ()) . runBaseExpr . renderCreate
+
+dropTable :: forall a f. DBTable a => Proxy (a f) -> Db ()
+dropTable _ = fmap (const ()) $ querySql ("drop table if exists " ++ tableName (fieldNames :: a FieldName)) []
 
 -- | Generate table instance from a datatype
 
@@ -35,7 +91,7 @@ mkTableFields :: (String -> String) -> Dec -> Q [Dec]
 mkTableFields mkId (DataD _ tnm pars [RecC cns fs] _) =
      let ps = reverse $ tail $ reverse $ map getTV pars
          fieldNs = map (\(n,_,_) -> mkId (show n)) fs 
-         inst = InstanceD [] (ConT (mkName "Functor1") `AppT` (foldl AppT (ConT tnm) $ map VarT ps))
+         inst = InstanceD [] (ConT (mkName "DBTable") `AppT` (foldl AppT (ConT tnm) $ map VarT ps))
                    [FunD (mkName "tableName") [Clause [WildP] (NormalB $ LitE $ StringL $ mkId $ show tnm) []]
                    ,FunD (mkName "fieldNames")
                        [Clause [] (NormalB $ foldl AppE (ConE cns) $ map (AppE (ConE $ mkName "FieldName") . LitE . StringL) fieldNs) []]
@@ -95,8 +151,8 @@ baseTypeInfo SqlGUIDT              = "UUID"
 baseTypeInfo (SqlUnknownT "2950")  = "UUID"
 baseTypeInfo (SqlUnknownT _)       = "SqlValue" 
 
-withCase :: Eq a => a -> r -> (a -> r) -> a -> r
-withCase a r f a' | a' == a = r
+withCase :: Eq r => r -> r -> (a -> r) -> a -> r
+withCase a r f a' | f a' == a = r
                   | otherwise = f a'
 
 baseIdent :: String -> String
