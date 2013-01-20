@@ -31,7 +31,7 @@ data FieldOpt a  where
   Def      :: Eq a => a -> FieldOpt a
   Primary  :: FieldOpt a
   Unique   :: FieldOpt a
-  Foreign  :: DBTable t => t :> a -> FieldOpt a
+  Foreign  :: Table t => t :> a -> FieldOpt a
   Type     :: String -> FieldOpt a
 
 instance Eq (FieldOpt a) where
@@ -49,7 +49,7 @@ instance Eq (FieldOpt a) where
 
 data FieldOpts a = FieldOpts { fieldOpts :: [FieldOpt a] }
 
-renderCreate :: forall a. DBTable a => a FieldOpts -> BaseExpr String
+renderCreate :: forall a. Table a => a FieldOpts -> BaseExpr String
 renderCreate fs =
   let mkForeign (Foreign (l :: (t :> x))) =
          let nms = fieldNames :: t FieldName
@@ -73,10 +73,10 @@ renderCreate fs =
             , return ")"
             ]
 
-createTable :: forall a . DBTable a => a FieldOpts -> Db ()
+createTable :: forall a . Table a => a FieldOpts -> Db ()
 createTable = fmap (const ()) . runBaseExpr . renderCreate
 
-dropTable :: forall a f. DBTable a => Proxy (a f) -> Db ()
+dropTable :: forall a f. Table a => Proxy (a f) -> Db ()
 dropTable _ = fmap (const ()) $ querySql ("drop table if exists " ++ tableName (fieldNames :: a FieldName)) []
 
 -- | Generate table instance from a datatype
@@ -91,7 +91,7 @@ mkTableFields :: (String -> String) -> Dec -> Q [Dec]
 mkTableFields mkId (DataD _ tnm pars [RecC cns fs] _) =
      let ps = reverse $ tail $ reverse $ map getTV pars
          fieldNs = map (\(n,_,_) -> mkId (show n)) fs 
-         inst = InstanceD [] (ConT (mkName "DBTable") `AppT` (foldl AppT (ConT tnm) $ map VarT ps))
+         inst = InstanceD [] (ConT (mkName "Table") `AppT` (foldl AppT (ConT tnm) $ map VarT ps))
                    [FunD (mkName "tableName") [Clause [WildP] (NormalB $ LitE $ StringL $ mkId $ show tnm) []]
                    ,FunD (mkName "fieldNames")
                        [Clause [] (NormalB $ foldl AppE (ConE cns) $ map (AppE (ConE $ mkName "FieldName") . LitE . StringL) fieldNs) []]
@@ -111,7 +111,7 @@ retrieveTable tbl hnm mkI mkT conf =
      let dat  = DataD [] (mkName hnm) [] [RecC (mkName hnm) (map mkCol cols)] [mkName "Show", mkName "Eq"]
      rec <- dbRecord' dat
      let anm = (\(DataD _ v _ _ _) -> v) $ head rec
-         inst = InstanceD [] (ConT (mkName "DBTable") `AppT` ConT anm)
+         inst = InstanceD [] (ConT (mkName "Table") `AppT` ConT anm)
                    [FunD (mkName "tableName") [Clause [WildP] (NormalB $ LitE $ StringL tbl) []]
                    ,FunD (mkName "fieldNames")
                        [Clause [] (NormalB $ foldl AppE (ConE anm) $ map (AppE (ConE $ mkName "FieldName") . LitE . StringL) $ map fst cols) []]

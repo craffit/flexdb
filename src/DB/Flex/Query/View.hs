@@ -18,16 +18,27 @@ import Data.Maybe
 
 import DB.Flex.Monad
 import DB.Flex.Record
-import DB.Flex.Query.Ontology
 import DB.Flex.Query.Typed 
 import qualified Data.Map as M
 
 import Safe
 
+-- | A class for datatypes which give rise to a database query
+
+class Queryable a where
+  type QueryTable a :: (* -> *) -> *
+  filterQuery :: a -> QueryTable a (SingleExpr l) -> Query i l (QueryTable a (SingleExpr l))
+
+fieldFilter :: (Table t, Eq x, Convertible x SqlValue) 
+            => a :-> x -> t :> x -> a 
+            -> t (SingleExpr l) -> Query i l (t (SingleExpr l))
+fieldFilter vField dField v = sieve (\tab -> tab |.| dField .==. constant (v |.| vField)) . return
+
+
 -- | Main type class for describing a Haskell 'view' on a database table. This view can aggregate data from
 -- others tables and specifies the way in which the data structure can be saved.
 
-class (Typeable a, Data a, DBTable (ViewTable a), Eq a) => TableView a where
+class (Typeable a, Data a, Table (ViewTable a), Eq a) => TableView a where
   -- | The table for which the view is defined
   type ViewTable a :: (* -> *) -> *
   viewQuery :: ViewQuery a (ViewTable a)

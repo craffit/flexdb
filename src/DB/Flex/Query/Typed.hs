@@ -224,11 +224,11 @@ projectQuery tb nms =
       return $ fmap1 (Exp . return . return . ((tName ++ ".") ++) . unFieldName) nms
 
 -- | Project a table
-table :: forall t i l. DBTable t => Query i l (t (SingleExpr l))
+table :: forall t i l. Table t => Query i l (t (SingleExpr l))
 table = let tName  = tableName (undefined :: t (SingleExpr l))
         in projectQuery (return tName) fieldNames
 
-tableSieve :: DBTable t => (t (SingleExpr l) -> SingleExpr l Bool) -> Query i l (t (SingleExpr l))
+tableSieve :: Table t => (t (SingleExpr l) -> SingleExpr l Bool) -> Query i l (t (SingleExpr l))
 tableSieve p = sieve p table
 
 fieldList :: DBRecord r => r a -> r FieldName
@@ -443,13 +443,13 @@ notin e q = binOp "not in" e $ Exp $ fmap snd $ renderSubExp (fmap AbstractVal q
 _default :: InsertExpr i a
 _default = Exp $ return $ return "DEFAULT"
 
-defaultInsert :: forall t . DBTable t => t (InsertExpr Single)
+defaultInsert :: forall t . Table t => t (InsertExpr Single)
 defaultInsert = fmap1 (const _default) (recordFields :: t Field)
 
 ignore :: UpdateExpr a
 ignore = Exp $ return $ return "IGNORE"
 
-emptyUpdate :: forall t. DBTable t => t UpdateExpr
+emptyUpdate :: forall t. Table t => t UpdateExpr
 emptyUpdate = fmap1 (const ignore) (recordFields :: t Field)
 
 isDefault :: InsertExpr i a -> Bool
@@ -555,14 +555,14 @@ query' q =
   let (rec, bq) = runQuery $ q >>= mapM runExp . collect bExp
   in map buildRecord <$> B.baseQuery bq (sequence rec)
 
-insert' :: forall i r. DBTable r => Query i Z (r (InsertExpr i)) -> Db [r Identity]
+insert' :: forall i r. Table r => Query i Z (r (InsertExpr i)) -> Db [r Identity]
 insert' q =
   let (rec, bq) = runQuery $ q >>= mapM runExp . collect bExp
       nms       = names (undefined :: r a)
       tname     = tableName (undefined :: r a)
   in map buildRecord <$> B.baseInsert bq tname (zip nms rec)
 
-update' :: forall t. DBTable t => (t (SingleExpr Z) -> Query Single Z (t UpdateExpr)) -> Db [t Identity]
+update' :: forall t. Table t => (t (SingleExpr Z) -> Query Single Z (t UpdateExpr)) -> Db [t Identity]
 update' qf =
   let tname     = tableName (undefined :: t a)
       q         = qf . fmap1 (Exp . return . return . ((tname ++ ".") ++) . unFieldName) $ fieldNames
@@ -570,7 +570,7 @@ update' qf =
       nms       = names (undefined :: t a)
   in map buildRecord <$> B.baseUpdate bq tname (zip nms rec)
 
-delete' :: forall t. DBTable t => (t (SingleExpr Z) -> Query Single Z ()) -> Db [t Identity]
+delete' :: forall t. Table t => (t (SingleExpr Z) -> Query Single Z ()) -> Db [t Identity]
 delete' qf =
   let tName   = tableName (undefined :: t v)
       tFields = map ((tName ++ ".")++) $ names (undefined :: t v)
@@ -580,13 +580,13 @@ delete' qf =
 query :: (DBRecord r, AbstractType a r) => Query i Z (r (Expr i Z)) -> Db [a]
 query = fmap (map fromAbstract) . query'
 
-insert :: (DBTable r,  AbstractType a r, MeetType t Insert ~ Insert) 
+insert :: (Table r,  AbstractType a r, MeetType t Insert ~ Insert) 
        => Query i Z (r (Exp t l i)) -> Db [a]
 insert = fmap (map fromAbstract) . insert' . fmap (fmap1 castExp)
 
-update :: (DBTable r, AbstractType a r, MeetType t Update ~ Update) 
+update :: (Table r, AbstractType a r, MeetType t Update ~ Update) 
        => (r (SingleExpr Z) -> Query Single Z (r (Exp Update t Single))) -> Db [a]
 update = fmap (map fromAbstract) . update' . fmap (fmap $ fmap1 castExp)
 
-delete :: (DBTable r, AbstractType a r) => (r (SingleExpr Z) -> Query Single Z ()) -> Db [a]
+delete :: (Table r, AbstractType a r) => (r (SingleExpr Z) -> Query Single Z ()) -> Db [a]
 delete = fmap (map fromAbstract) . delete'

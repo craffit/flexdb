@@ -47,7 +47,7 @@ data Field a where
 class (Zippable1 r, Traversable1 r) => DBRecord r where
   recordFields :: r Field
 
-class DBRecord t => DBTable t where
+class DBRecord t => Table t where
   tableName    :: t v -> String
   fieldNames   :: t FieldName
 
@@ -60,7 +60,7 @@ buildRecord vs = distribute (\Field v -> Identity $ fromSql v) vs recordFields
 recordValues :: DBRecord r => r Identity -> [SqlValue]
 recordValues = collect (\(Tup1 Field v) -> toSql $ runIdentity v) . zip1 Tup1 recordFields
 
-names :: forall t v. DBTable t => t v -> [String]
+names :: forall t v. Table t => t v -> [String]
 names _ = foldrf (\v ac -> unFieldName v : ac) [] (fieldNames :: t FieldName)
 
 mkRecordFields :: Name -> Q [Dec]
