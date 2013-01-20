@@ -36,13 +36,13 @@ import Language.Haskell.TH
 import Language.Haskell.TH.Util
 
 data Tup1 f g a = Tup1 (f a) (g a)
+data ConstVal a b = ConstVal { unConstVal :: a }
 
 -- * Database fields
 data FieldName a = FieldName { unFieldName :: String }
 
 data Field a where
   Field :: (Convertible a SqlValue, Convertible SqlValue a) => Field a
-
 
 class (Zippable1 r, Traversable1 r) => DBRecord r where
   recordFields :: r Field
