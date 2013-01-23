@@ -1,14 +1,13 @@
 {-# LANGUAGE TemplateHaskell, GADTs, TypeOperators, Rank2Types, ScopedTypeVariables, KindSignatures #-}
 module DB.Flex.Create where
 
-import Control.Monad
-
 import Data.Char
 import Data.List
 import Data.Maybe
 import Data.Proxy
 import Database.HDBC
 
+import Data.Functor1
 import Data.Foldable1
 import Data.Zippable1
 import Data.Label.Util
@@ -17,6 +16,7 @@ import DB.Flex.Config
 import DB.Flex.Monad
 import DB.Flex.Record
 import DB.Flex.Query.Base
+import DB.Flex.Query.Core
 import DB.Flex.Query
 
 
@@ -25,56 +25,91 @@ import Language.Haskell.TH.Util
 
 import Safe
 
+data Action = None | Restrict | SetNull | SetDefault | Cascade deriving Eq
+
+instance Show Action where
+  show None       = "no action"
+  show Restrict   = "restrict"
+  show SetNull    = "set null"
+  show SetDefault = "set default"
+  show Cascade    = "cascade"
+
 data FieldOpt a  where
-  Nullable :: FieldOpt (Maybe a)
+  Nullable :: FieldOpt a
   NotNull  :: FieldOpt a
-  Def      :: Eq a => a -> FieldOpt a
+  Def      :: (MeetAggr i Single ~ Single) => Expr i l a -> FieldOpt a
   Primary  :: FieldOpt a
   Unique   :: FieldOpt a
-  Foreign  :: Table t => t :> a -> FieldOpt a
+  Foreign  :: Table t => t :> a -> Action -> FieldOpt a
   Type     :: String -> FieldOpt a
+  Check    :: (SingleExpr l a -> SingleExpr l Bool) -> FieldOpt a
 
 instance Eq (FieldOpt a) where
   Nullable  == Nullable = True
   NotNull   == NotNull  = True
-  (Def a)   == (Def b)  = a == b
+  (Def a)   == (Def b)  = expString a == expString b
   Primary   == Primary  = True
   Unique    == Unique   = True
-  (Foreign (l :: t :> x)) == (Foreign (l' :: t' :> x'))  =
+  (Foreign (l :: t :> x) a) == (Foreign (l' :: t' :> x') a')  =
     let nms  = fieldNames :: t FieldName
         nms' = fieldNames :: t' FieldName
-    in tableName nms == tableName nms' && unFieldName (nms |.| l) == unFieldName (nms' |.| l')
+    in a == a' && tableName nms == tableName nms' && unFieldName (nms |.| l) == unFieldName (nms' |.| l')
   (Type a)  == (Type b) = a == b
+  (Check f) == (Check f') = expString (f (pureExp "field")) == expString (f' (pureExp "field"))
   _ == _ = False
 
 data FieldOpts a = FieldOpts { fieldOpts :: [FieldOpt a] }
 
-renderCreate :: forall a. Table a => a FieldOpts -> BaseExpr String
-renderCreate fs =
-  let mkForeign (Foreign (l :: (t :> x))) =
+data TableOpt t where
+  TableUnique  :: [Label t] -> TableOpt t
+  TablePrimary :: [Label t] -> TableOpt t
+  TableCheck   :: (t (SingleExpr l) -> SingleExpr l Bool) -> TableOpt t
+
+renderCreate :: forall a. Table a => a FieldOpts -> [TableOpt a] -> BaseExpr String
+renderCreate fOpts tbOpts =
+  let mkForeign (Foreign (l :: (t :> x)) ac) =
          let nms = fieldNames :: t FieldName
-         in Just $ "references " ++ tableName nms ++ " (" ++ unFieldName (nms |.| l) ++ ")"
+         in Just $ "references " ++ tableName nms ++ " (" ++ unFieldName (nms |.| l) ++ ") on delete " ++ show ac
       mkForeign _ = Nothing
-      renderField nm ops =
-        fmap (intercalate " ") $ sequence
+
+      renderFieldOpt :: forall x. DBType x => String -> [FieldOpt x] -> BaseExpr String
+      renderFieldOpt nm ops =
+        let defNullable = nullable (Proxy :: Proxy x)
+            defType     = typeRep (Proxy :: Proxy x)
+        in fmap (intercalate " ") $ sequence
                     [ return nm
-                    , return $ head $ [ v | Type v <- ops ] ++ [ "text" ]
-                    , return $ if any (==NotNull) ops then "not null" else "null"
-                    , maybe (return "") (liftM ("default " ++) . value . toSql) $ headMay $ [ v | Def v <- ops ]
+                    , return $ headDef defType $ [ v | Type v <- ops ]
+                    , return $ if any (==Nullable) ops || (all (/=NotNull) ops && defNullable) 
+                                then "null" 
+                                else "not null"
+                    , fromMaybe (return "") $ headMay $ 
+                          [ fmap (\e -> "default (" ++ e ++ ")") $ runExp v 
+                          | Def v <- ops ]
                     , return $ if any (==Primary) ops then "primary key" else ""
                     , return $ if any (==Unique) ops then "unique" else ""
                     , return $ intercalate " " $ catMaybes $ map mkForeign ops
+                    , fmap (intercalate " ") $ sequence $ 
+                          [ fmap (\e -> "check (" ++ e ++ ")") $ runExp (f (pureExp nm)) 
+                          | Check f <- ops ]
                     ]
+
+      renderTableOpt (TableUnique fs)  = return $ "unique (" ++ intercalate ", " (map (\(Label l) -> unFieldName (fieldNames |.| l)) fs) ++ ")"
+      renderTableOpt (TablePrimary fs) = return $ "primary key (" ++ intercalate ", " (map (\(Label l) -> unFieldName (fieldNames |.| l)) fs) ++ ")"
+      renderTableOpt (TableCheck chk)  = fmap (\e -> "check (" ++ e ++ ")") . runExp . chk . fmap1 (Exp . return . return . unFieldName) $ fieldNames
+
   in fmap (intercalate " ") $ sequence
-            [ return $ "create table if not exists " ++ tableName fs ++ " ("
-            , fmap (intercalate ", ") $ sequence $ collect unConstVal 
-                  $ zip1 (\(FieldName nm) (Tup1 Field (FieldOpts ops)) -> ConstVal $ renderField nm ops) fieldNames 
-                  $ zip1 Tup1 recordFields fs
+            [ return $ "create table if not exists " ++ tableName fOpts ++ " ("
+            , fmap (intercalate ", ") $ sequence $ 
+                (collect unConstVal 
+                  $ zip1 (\(FieldName nm) (Tup1 Field (FieldOpts ops)) -> ConstVal $ renderFieldOpt nm ops) fieldNames 
+                  $ zip1 Tup1 recordFields fOpts)
+                ++
+                map renderTableOpt tbOpts
             , return ")"
             ]
 
-createTable :: forall a . Table a => a FieldOpts -> Db ()
-createTable = fmap (const ()) . runBaseExpr . renderCreate
+createTable :: forall a . Table a => a FieldOpts -> [TableOpt a] -> Db ()
+createTable fOpts tbOpts = fmap (const ()) $ runBaseExpr $ renderCreate fOpts tbOpts
 
 dropTable :: forall a f. Table a => Proxy (a f) -> Db ()
 dropTable _ = fmap (const ()) $ querySql ("drop table if exists " ++ tableName (fieldNames :: a FieldName)) []
@@ -83,9 +118,11 @@ dropTable _ = fmap (const ()) $ querySql ("drop table if exists " ++ tableName (
 
 mkTable :: (String -> String) -> Name -> Q [Dec]
 mkTable f n = 
-  do rec  <- dbRecord n 
+  do TyConI d <- reify n
+     rec  <- dbRecord' d 
      inst <- mkTableFields f (head rec)
-     return $ rec ++ inst
+     viewInst <- mkAbstractView' d (head rec)
+     return $ rec ++ inst ++ viewInst
 
 mkTableFields :: (String -> String) -> Dec -> Q [Dec]
 mkTableFields mkId (DataD _ tnm pars [RecC cns fs] _) =
@@ -110,13 +147,14 @@ retrieveTable tbl hnm mkI mkT conf =
          addNullable False v         = v
      let dat  = DataD [] (mkName hnm) [] [RecC (mkName hnm) (map mkCol cols)] [mkName "Show", mkName "Eq"]
      rec <- dbRecord' dat
+     viewInst <- mkAbstractView' dat (head rec)
      let anm = (\(DataD _ v _ _ _) -> v) $ head rec
          inst = InstanceD [] (ConT (mkName "Table") `AppT` ConT anm)
                    [FunD (mkName "tableName") [Clause [WildP] (NormalB $ LitE $ StringL tbl) []]
                    ,FunD (mkName "fieldNames")
                        [Clause [] (NormalB $ foldl AppE (ConE anm) $ map (AppE (ConE $ mkName "FieldName") . LitE . StringL) $ map fst cols) []]
                    ]
-     return $ [ dat, inst ] ++ rec
+     return $ [ dat, inst ] ++ rec ++ viewInst
 
 -- | Mapping SQL types to Haskell types
 baseTypeInfo :: SqlTypeId -> String

@@ -4,6 +4,7 @@
            , ConstraintKinds, GADTs #-}
 module DB.Flex.Query.Ancestry where
 
+import Control.Monad
 import Data.Convertible
 import Data.Label.Util
 import DB.Flex.Monad
@@ -24,32 +25,36 @@ class RecordSelector t => PrimarySelector t
 class (RecordSelector t, RecordSelector (ParentTable t), Foreign t (ParentTable t)) => ChildSelector t where
   type ParentTable t :: (* -> *) -> *
 
+-- | Select a row from a table
+selector :: PrimarySelector t => RecordKey t -> Query i l (t (SingleExpr l))
+selector v = tableSieve $ \tab -> con v .==. tab |.| keyField
+
 -- | A version of children with restricted ancestry types
-selectorChildren :: ChildSelector t => Query i l (ParentTable t (SingleExpr l)) -> Query i l (t (SingleExpr l))
+selectorChildren :: ChildSelector t => ParentTable t (SingleExpr l) -> Query i l (t (SingleExpr l))
 selectorChildren = children
 
 infixl 5 *->
-infixl 3 *+>
+infixr 3 *+>
 
 -- | Select the child of a table
-child :: ChildSelector t => Query i l (ParentTable t (SingleExpr l)) -> RecordKey t -> Query i l (t (SingleExpr l))
-child q k = sieve (\tab -> tab |.| keyField .==. constant k) (children q)
+child :: ChildSelector t => RecordKey t -> ParentTable t (SingleExpr l) -> Query i l (t (SingleExpr l))
+child k = sieve (\tab -> tab |.| keyField .==. constant k) <=< children
+
 
 (*->) :: ChildSelector t => Query i l (ParentTable t (SingleExpr l)) -> RecordKey t -> Query i l (t (SingleExpr l))
-(*->) = child
+q *-> k = q >>= child k
 
 -- | Add another query as parent
-withParent :: (MeetAggr Single i ~ i, MeetType Value r ~ r, ChildSelector t)
-           => Query i l (ParentTable t (SingleExpr l)) -> Query i l (t (Exp r i l)) -> Query i l (t (Exp r i l))
-withParent p q =
+withParent :: (MeetType Value r ~ r', ChildSelector t)
+           => Query i l (ParentTable t (SingleExpr l)) -> t (Exp r Single l) -> Query i l (t (Exp r' Single l))
+withParent p qr =
   do pr <- p
-     qr <- q
-     let keys = foreignKeys
+     let keys = foreignKey
      return $ firstJoin keys |->| pr |.| secondJoin keys $ qr
 
-(*+>) :: (MeetAggr Single i ~ i, MeetType Value r ~ r, ChildSelector t)
-      => Query i l (ParentTable t (SingleExpr l)) -> Query i l (t (Exp r i l)) -> Query i l (t (Exp r i l))
-(*+>) = withParent
+(*+>) :: (MeetType Value r ~ r', ChildSelector t)
+      => Query i l (ParentTable t (SingleExpr l)) -> Query i l (t (Exp r Single l)) -> Query i l (t (Exp r' Single l))
+q *+> q' = q' >>= withParent q
 
 
 -- | Type-class trick to do child-selection as a multivariate funtion.
@@ -80,7 +85,7 @@ instance (SelectAggr' r ~ Single, SelectRecord r, ChildSelector (SelectTable r),
   type SelectLevel (a -> r) = SelectLevel r
   type SelectAggr' (a -> r) = SelectAggr' r
   selectRecord' q v =
-    let keys = foreignKeys
+    let keys = foreignKey
     in selectRecord' $
           do par <- q
              chd <- tableSieve (\tab -> con v .==. tab |.| keyField)

@@ -13,8 +13,8 @@ import DB.Flex.Monad
 
 type BaseExpr a = State [SqlValue] a
 
-runExp :: BaseExpr a -> a
-runExp = fst . flip runState []
+runBase :: BaseExpr a -> a
+runBase = fst . flip runState []
 
 value :: SqlValue -> BaseExpr String
 value v =
@@ -93,7 +93,7 @@ renderQuery bq project =
 
 renderInsert :: BaseQuery -> String -> [(String, BaseExpr String)] -> BaseExpr String
 renderInsert bq tab flds =
-  let noDefs = filter ((/="DEFAULT") . runExp . snd) flds
+  let noDefs = filter ((/="DEFAULT") . runBase . snd) flds
   in fmap (intercalate " ") $ sequence
             [ return $ "insert into " ++  tab
             , return $ "(" ++ intercalate "," (map fst noDefs) ++ ")"
@@ -104,7 +104,7 @@ renderInsert bq tab flds =
 
 renderUpdate :: BaseQuery -> String -> [(String, BaseExpr String)] -> BaseExpr String
 renderUpdate bq tab flds =
-  let noIgns = filter ((/="IGNORE") . runExp . snd) flds
+  let noIgns = filter ((/="IGNORE") . runBase . snd) flds
   in  fmap (intercalate " ") $ sequence
             [ return $ "update " ++ tab ++ " set"
             , fmap (intercalate ",") $ mapM (\(f,v) -> return (f ++ " = ") <-> v) noIgns

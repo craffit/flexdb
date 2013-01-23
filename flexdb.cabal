@@ -32,6 +32,7 @@ Library
                       Language.Haskell.TH.Util
 
   other-modules:     DB.Flex.Query.Base
+                     DB.Flex.Query.Core
   
   build-depends:       base >= 3 && <= 5
                      , containers
@@ -44,7 +45,6 @@ Library
                      , mtl
                      , monad-control 
                      , safe == 0.3.*
-                     , syb ==0.3.*
                      , tagged 
                      , template-haskell
                      , time

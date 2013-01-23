@@ -29,20 +29,18 @@ class (Table t, Convertible (PrimKey t) SqlValue) => Primary t where
 class (Table t, Table t', Eq (ForeignKey t t')) => Foreign t t' where
 --  type Relation t t' :: *
   type ForeignKey t t' :: *
-  foreignKeys :: (t :><: t') (ForeignKey t t')
+  foreignKey :: (t :><: t') (ForeignKey t t')
 
-parent :: Foreign t t' => Query i l (t (SingleExpr l)) -> Query i l (t' (SingleExpr l))
-parent q = 
-  do par   <- table
-     child <- q
-     let keys = foreignKeys
-     restrict (par |.| secondJoin keys .==. child |.| firstJoin keys)
-     return par
+parent :: Foreign t t' => t (SingleExpr l) -> Query i l (t' (SingleExpr l))
+parent = join $ flipJoin foreignKey
 
-children :: Foreign t t' => Query i l (t' (SingleExpr l)) -> Query i l (t (SingleExpr l))
-children q = 
-  do par <- q
-     child <- table
-     let keys = foreignKeys
-     restrict (par |.| secondJoin keys .==. child |.| firstJoin keys)
-     return child
+children :: Foreign t t' => t' (SingleExpr l) -> Query i l (t (SingleExpr l))
+children = join foreignKey
+
+join :: (Table t, Eq x) => (t :><: t') x -> t' (SingleExpr l) -> Query i l (t (SingleExpr l))
+join keys par = tableSieve $ \tab -> par |.| secondJoin keys .==. tab |.| firstJoin keys
+
+infixl 5 >*<
+
+(>*<) :: (Table t, Eq x) => t :> x -> t' :> x -> t' (SingleExpr l) -> Query i l (t (SingleExpr l))
+k1 >*< k2 = join $ k1 >-< k2

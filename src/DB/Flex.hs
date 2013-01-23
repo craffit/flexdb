@@ -13,7 +13,7 @@ module DB.Flex
    , module DB.Flex.Config
    
    , module Control.Applicative
-   , module Control.Monad.Identity
+   , Identity(..)
    ) where
 
 import Data.Foldable1
