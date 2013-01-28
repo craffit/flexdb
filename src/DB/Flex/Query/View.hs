@@ -11,11 +11,13 @@ import Data.Convertible
 import Data.Label
 import Data.Label.Util
 
-import Data.Zippable1
-
-import Data.Foldable hiding (concat, foldl)
+import Data.Foldable hiding (concat, foldl, foldr)
 import Data.Maybe
+import Data.Record.Abstract
+import Data.Zippable1
+import Data.Foldable1
 
+import DB.Flex.Table
 import DB.Flex.Monad
 import DB.Flex.Record
 import DB.Flex.Query.Typed 
@@ -26,31 +28,18 @@ import Language.Haskell.TH.Util
 
 import Safe
 
--- | A class for datatypes which give rise to a database query
-
-class Queryable a where
-  type QueryTable a :: (* -> *) -> *
-  filterQuery :: a -> QueryTable a (SingleExpr l) -> Query i l (QueryTable a (SingleExpr l))
-
-fieldFilter :: (Table t, Eq x, Convertible x SqlValue) 
-            => a :-> x -> t :> x -> a 
-            -> t (SingleExpr l) -> Query i l (t (SingleExpr l))
-fieldFilter vField dField v = sieve (\tab -> tab |.| dField .==. constant (v |.| vField))
-
-
 -- | Main type class for describing a Haskell 'view' on a database table. This view can aggregate data from
 -- others tables and specifies the way in which the data structure can be saved.
 
-class (Table (ViewTable a), Eq a) => View a where
+class (TableDef (ViewTable a), Eq a) => View a where
   -- | The table for which the view is defined
   type ViewTable a :: (* -> *) -> *
   viewQuery :: ViewQuery a (ViewTable a)
 
 -- | A view query is just a list of 'Fields' which can be specified.
 data ViewQuery a t = 
-  ViewQuery 
-    { makeView   :: t Identity -> a
-    , storeView  :: a -> t (InsertExpr Single)
+  ViewQuery
+    { emptyView  :: a
     , viewFields :: [ViewField a t]
     }
 
@@ -72,11 +61,11 @@ data ViewField a t where
 
 data FieldType t v where
   Empty :: FieldType t ()
-  Base  :: Convertible x SqlValue => t :> x -> FieldType t x
-  Join  :: (View o, Ord x, Convertible x SqlValue, Convertible SqlValue x) =>
+  Base  :: DBType x => t :> x -> FieldType t x
+  Join  :: (View o, Ord x, DBType x) =>
          { fieldJoin :: (t :><: ViewTable o) x
          , relation  :: Relation o fv
-         , creation  :: Creation (ViewTable o) o
+         , creation  :: Creation
          } -> FieldType t fv
 
 -- | Description of join relations. Describes what the remote table is to the current table.
@@ -87,10 +76,10 @@ data Relation o v where
   MultiChildV  :: Relation o [o]
 
 -- | Represents how joined tables should be handled during insertion and update
-data Creation t o where
-  CreateV ::                                    Creation t o
-  RelateV :: (Queryable o, t ~ QueryTable o) => Creation t o
-  IgnoreV ::                                    Creation t o
+data Creation where
+  Create :: Creation
+  Relate :: Creation
+  Ignore :: Creation
 
 data Default = Default | NoDefault
 
@@ -101,21 +90,39 @@ infix 5 |+, |=, |?
 (|+) :: a :-> v -> FieldType t v -> ViewField a t
 to |+ aggr = ViewField to aggr NoDefault
 
-(|=) :: Convertible v SqlValue => a :-> v -> t :> v -> ViewField a t
+(|=) :: DBType v => a :-> v -> t :> v -> ViewField a t
 to |= from = ViewField to (Base from) NoDefault
 
-(|?) :: Convertible v SqlValue => a :-> v -> t :> v -> ViewField a t
+(|?) :: DBType v => a :-> v -> t :> v -> ViewField a t
 to |? from = ViewField to (Base from) Default
 
+-- | foldrM with arguments permuted
 foldrM' :: Monad m => b -> [a] -> (a -> b -> m b) -> m b
 foldrM' b l f = foldrM f b l
+
+-- | Query a view value
+viewFilter :: forall a i l. View a => a -> ViewTable a (SingleExpr l) -> Query i l ()
+viewFilter a q =
+  let ViewQuery _ fields = viewQuery :: ViewQuery a (ViewTable a)
+      viewQ = (\f -> foldr f (return defaultInsert) fields) $ \(ViewField field fType _) q' ->
+                  case fType of
+                      Base f -> fmap (f |->>| a |.| field) q'
+                      Join (Conj fromField toField) ParentV _ ->
+                                  do r    <- q'
+                                     relPar <- table >>= filterView (a |.| field)
+                                     return $ fromField |->| relPar |.| toField $ r
+                      _ -> q'
+  in viewQ >>= (\e -> filterRecord e q)
+
+filterView :: forall a i l. View a => a -> ViewTable a (SingleExpr l) -> Query i l (ViewTable a (SingleExpr l))
+filterView a q = viewFilter a q >> return q
 
 -- | Generic function for querying views. Will aggregate all appropriate data as specified in the viewQuery from View
 performViewQuery :: forall a i. View a => Query i Z (ViewTable a (Expr i Z)) -> Db [(ViewTable a Identity, a)]
 performViewQuery q =
    do dat <- query' q
-      let ViewQuery mk _ fields = viewQuery :: ViewQuery a (ViewTable a)
-          empt                  = fmap (id &&& mk) dat
+      let ViewQuery emp fields = viewQuery :: ViewQuery a (ViewTable a)
+          empt   = fmap (flip (,) emp) dat
       foldrM' empt fields $ \(ViewField field fType _) ac ->
           case fType of
             Empty  -> return $ map (second $ set field ()) ac
@@ -130,24 +137,24 @@ performViewQuery q =
                     OptionChildV -> return $ map (\(r, v) -> (r, set field (headMay =<< M.lookup (runIdentity $ get fromField r) agrMap) v)) ac
                     MultiChildV  -> return $ map (\(r, v) -> (r, set field (fromMaybe [] $ M.lookup (runIdentity $ get fromField r) agrMap) v)) ac
 
-addInsert :: InsertExpr i a -> InsertExpr i a -> InsertExpr i a
+addInsert :: InsertExpr i l a -> InsertExpr i l a -> InsertExpr i l a
 addInsert i i' | isDefault i' = i
                | otherwise    = i'
 
 -- | Generic view inserting updating function, takes a list of viewable values and possible pre-filled data
 saveView :: forall a. View a
-         => Query Single Z (ViewTable a (InsertExpr Single)) -> [a] -> Db [(a, ViewTable a Identity)]
+         => Query Single Z (ViewTable a (InsertExpr Single Z)) -> [a] -> Db [(a, ViewTable a Identity)]
 saveView ini vs =
-  do let ViewQuery _ store fields = viewQuery :: ViewQuery a (ViewTable a)
-         ini' :: [(a, Query Single Z (ViewTable a (InsertExpr Single)))]
-         ini'   = map (id &&& (\v -> liftM (zip1 addInsert (store v)) ini)) vs
+  do let ViewQuery _ fields = viewQuery :: ViewQuery a (ViewTable a)
+         ini' :: [(a, Query Single Z (ViewTable a (InsertExpr Single Z)))]
+         ini'   = map (flip (,) ini) vs
      -- Set field values and create/join parents
      qs <- foldrM' ini' fields $ \(ViewField field fType def) ac ->
               case (def, fType) of
                 (NoDefault, Base f) -> 
                     return $ flip map ac $ \(a, q) ->
                                (a, modify f (addInsert (con' $ a |.| field)) `liftM` q)
-                (NoDefault, Join (Conj fromField toField) ParentV CreateV) ->
+                (NoDefault, Join (Conj fromField toField) ParentV Create) ->
                     forM ac $ \(a,q) ->
                              do [(_,x)] <- saveView (return defaultInsert) [a |.| field]
                                 return ( a
@@ -156,13 +163,13 @@ saveView ini vs =
                                               False -> return r
                                               True -> return $ fromField |->| (constant $ runIdentity $ x |.| toField) $ r
                                        )
-                (NoDefault, Join (Conj fromField toField) ParentV RelateV) ->
+                (NoDefault, Join (Conj fromField toField) ParentV Relate) ->
                     return $ flip map ac $ \(a,q) ->
                                       ( a
                                       , do ins <- q
                                            case isDefault (ins |.| fromField) of 
                                              False -> return ins
-                                             True -> do relPar <- table >>= filterQuery (a |.| field)
+                                             True -> do relPar <- table >>= filterView (a |.| field)
                                                         return $ fromField |->| (relPar |.| toField) $ ins
                                       )
                 _ -> return ac
@@ -173,8 +180,9 @@ saveView ini vs =
        forM_ rs $ \(a, r) ->
          let value   = get field a
          in case fType of
-             (Join (Conj fromField toField) pType CreateV) ->
-               let insertE = toField |->| (constant $ runIdentity $ get fromField r) $ defaultInsert
+             (Join (Conj fromField toField) (pType :: Relation o o') Create) ->
+               let insertE :: ViewTable o (InsertExpr Single Z)
+                   insertE = toField |->>| (runIdentity $ r |.| fromField) $ defaultInsert
                in case pType of
                     SingleChildV -> saveView (return insertE) [value] >> return ()
                     OptionChildV -> saveView (return insertE) (maybeToList value) >> return ()
@@ -185,35 +193,23 @@ saveView ini vs =
 
 
 -- | Generic view updating function
-performViewUpdate :: forall a. (View a, Queryable a)
+performViewUpdate :: forall a. View a
            => (ViewTable a (SingleExpr Z) -> Query Single Z (ViewTable a UpdateExpr))
            -> a -> Db [ViewTable a Identity]
 performViewUpdate fun a =
-  do let ViewQuery _ store fields = viewQuery :: ViewQuery a (ViewTable a)
-
-         addUpdate :: (MeetAggr i Single ~ Single) => InsertExpr i x -> UpdateExpr x -> UpdateExpr x
-         addUpdate i i' | isIgnore i' = cast i
-                        | otherwise   = i'
-
-         fun' = fmap (fmap $ zip1 addUpdate (store a)) fun
+  do let ViewQuery _ fields = viewQuery :: ViewQuery a (ViewTable a)
      -- Set field values and update/join parents
-     q <- foldrM' fun' fields $ \(ViewField field fType def) q' ->
+     q <- foldrM' fun fields $ \(ViewField field fType def) q' ->
               case (def, fType) of
-                (NoDefault, Base f) -> return $ fmap (fmap $ f |->| (constant $ a |.| field)) q'
-                (NoDefault, Join (Conj fromField toField) ParentV RelateV) ->
+                (NoDefault, Base f) -> return $ fmap (fmap $ f |->>| a |.| field) q'
+                (NoDefault, Join (Conj fromField toField) ParentV Relate) ->
                     return $ \i ->
                                 do upd    <- q' i
-                                   relPar <- table >>= filterQuery (a |.| field)
+                                   relPar <- table >>= filterView (a |.| field)
                                    return $ fromField |->| (relPar |.| toField) $ upd
                 _ -> return q'
      -- Update rows
      update' q 
-
-
-{-
-baseView :: AbstractType a t => ViewQuery a t
-baseView = ViewQuery id []
--}
 
 -- | Query a table and marshal using View
 queryView :: View a => Query i Z (ViewTable a (Expr i Z)) -> Db [a]
@@ -224,7 +220,7 @@ queryAll :: View a => Db [a]
 queryAll = queryView table
 
 -- | Insert a list of values with some default values pre-filled
-insertViews' :: View a => Query Single Z (ViewTable a (InsertExpr Single)) -> [a] -> Db ()
+insertViews' :: View a => Query Single Z (ViewTable a (InsertExpr Single Z)) -> [a] -> Db ()
 insertViews' v vs = saveView v vs >> return ()
 
 -- | Insert a list of value
@@ -236,19 +232,19 @@ insertView :: View a => a -> Db ()
 insertView = insertViews . return
 
 -- | Insert a 'Viewable' value with additional information
-insertView' :: View a => Query Single Z (ViewTable a (InsertExpr Single)) -> a -> Db ()
+insertView' :: View a => Query Single Z (ViewTable a (InsertExpr Single Z)) -> a -> Db ()
 insertView' q = insertViews' q . return
 
 -- | Update an existing value
-updateView' :: (QueryTable a ~ ViewTable a, View a, Queryable a) => a -> Db Int
-updateView' a = fmap length $ performViewUpdate (\v -> filterQuery a v >> return emptyUpdate) a
+updateView' :: View a => a -> Db Int
+updateView' a = fmap length $ performViewUpdate (\v -> filterView a v >> return emptyUpdate) a
 
--- | Update a value using its own reference. The field upon which Queryable depends can not be updated!
-updateView :: (QueryTable a ~ ViewTable a, View a, Queryable a) => a -> Db Int
-updateView a = fmap length $ performViewUpdate (\v -> filterQuery a v >> return emptyUpdate) a
+-- | Update a value using its own reference.
+updateView :: View a => a -> Db Int
+updateView a = fmap length $ performViewUpdate (\v -> filterView a v >> return emptyUpdate) a
 
 -- | Update and if that fail, create
-updateOrCreate :: (QueryTable a ~ ViewTable a, View a, Queryable a) => a -> Db ()
+updateOrCreate :: View a => a -> Db ()
 updateOrCreate a =
   do r <- updateView a
      when (r == 0) (insertView a)
@@ -258,79 +254,32 @@ data  SingleChild = SingleChild
 data  OptionChild = OptionChild
 data  MultiChild  = MultiChild 
 
-data Create = Create
-data Relate = Relate
-data Ignore = Ignore
-
 -- | This type class allows the construction of flexible views: a view which is dependent
 -- on the type. 
-class Eq v => FieldJoin t' x m c v where
-  mkFieldJoin :: (Ord x, Convertible x SqlValue, Convertible SqlValue x) 
-              => (t :><: t') x -> m -> c -> FieldType t v
+class Eq v => FieldJoin t' x m v where
+  mkFieldJoin :: (Ord x, DBType x) 
+              => (t :><: t') x -> m -> Creation -> FieldType t v
 
-instance FieldJoin t' x m c () where mkFieldJoin _ _ _ = Empty
-instance FieldJoin t' x Parent      Create () where mkFieldJoin _ _ _ = Empty
-instance FieldJoin t' x Parent      Relate () where mkFieldJoin _ _ _ = Empty
-instance FieldJoin t' x Parent      Ignore () where mkFieldJoin _ _ _ = Empty
-instance FieldJoin t' x SingleChild Create () where mkFieldJoin _ _ _ = Empty
-instance FieldJoin t' x SingleChild Relate () where mkFieldJoin _ _ _ = Empty
-instance FieldJoin t' x SingleChild Ignore () where mkFieldJoin _ _ _ = Empty
+instance FieldJoin t' x m () where mkFieldJoin _ _ _ = Empty
+instance FieldJoin t' x Parent      () where mkFieldJoin _ _ _ = Empty
+instance FieldJoin t' x SingleChild () where mkFieldJoin _ _ _ = Empty
 
 instance (Convertible x SqlValue, Eq x) 
-      => FieldJoin t' x m c x  where mkFieldJoin (Conj from _) _ _ = Base from
+      => FieldJoin t' x m x  where mkFieldJoin (Conj from _) _ _ = Base from
 instance (Convertible x SqlValue, Eq x) 
-      => FieldJoin t' x Parent Create x  where mkFieldJoin (Conj from _) _ _ = Base from
+      => FieldJoin t' x Parent x  where mkFieldJoin (Conj from _) _ _ = Base from
 instance (Convertible x SqlValue, Eq x) 
-      => FieldJoin t' x Parent Relate x  where mkFieldJoin (Conj from _) _ _ = Base from
-instance (Convertible x SqlValue, Eq x) 
-      => FieldJoin t' x Parent Ignore x  where mkFieldJoin (Conj from _) _ _ = Base from
-instance (Convertible x SqlValue, Eq x) 
-      => FieldJoin t' x SingleChild Create x  where mkFieldJoin (Conj from _) _ _ = Base from
-instance (Convertible x SqlValue, Eq x) 
-      => FieldJoin t' x SingleChild Relate x  where mkFieldJoin (Conj from _) _ _ = Base from
-instance (Convertible x SqlValue, Eq x) 
-      => FieldJoin t' x SingleChild Ignore x  where mkFieldJoin (Conj from _) _ _ = Base from
+      => FieldJoin t' x SingleChild x  where mkFieldJoin (Conj from _) _ _ = Base from
 
-instance (Convertible x SqlValue, Convertible SqlValue x
-         , View o, t' ~ ViewTable o
-         ) => FieldJoin t' x Parent Create o where 
-  mkFieldJoin cnj _ _ = Join cnj ParentV CreateV
-instance (Convertible x SqlValue, Convertible SqlValue x
-         , Queryable o, QueryTable o ~ ViewTable o
-         , View o, t' ~ ViewTable o
-         ) => FieldJoin t' x Parent Relate o where 
-  mkFieldJoin cnj _ _ = Join cnj ParentV RelateV
-instance (Convertible x SqlValue, Convertible SqlValue x
-         , View o, t' ~ ViewTable o
-         ) => FieldJoin t' x Parent Ignore o where 
-  mkFieldJoin cnj _ _ = Join cnj ParentV IgnoreV
+instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x Parent o where 
+  mkFieldJoin cnj _ _ = Join cnj ParentV Create
+instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x SingleChild o where 
+  mkFieldJoin cnj _ _ = Join cnj SingleChildV Create
+instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x OptionChild (Maybe o) where 
+  mkFieldJoin cnj _ _ = Join cnj OptionChildV Create
+instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x MultiChild [o] where 
+  mkFieldJoin cnj _ _ = Join cnj MultiChildV Create
 
-instance (Convertible x SqlValue, Convertible SqlValue x
-         , View o, t' ~ ViewTable o
-         ) => FieldJoin t' x SingleChild Create o where 
-  mkFieldJoin cnj _ _ = Join cnj SingleChildV CreateV
-instance (Convertible x SqlValue, Convertible SqlValue x
-         , View o, t' ~ ViewTable o
-         ) => FieldJoin t' x SingleChild Ignore o where 
-  mkFieldJoin cnj _ _ = Join cnj SingleChildV IgnoreV
-
-instance (Convertible x SqlValue, Convertible SqlValue x
-         , View o, t' ~ ViewTable o
-         ) => FieldJoin t' x OptionChild Create (Maybe o) where 
-  mkFieldJoin cnj _ _ = Join cnj OptionChildV CreateV
-instance (Convertible x SqlValue, Convertible SqlValue x
-         , View o, t' ~ ViewTable o
-         ) => FieldJoin t' x OptionChild Ignore (Maybe o) where 
-  mkFieldJoin cnj _ _ = Join cnj OptionChildV IgnoreV
-
-instance (Convertible x SqlValue, Convertible SqlValue x
-         , View o, t' ~ ViewTable o
-         ) => FieldJoin t' x MultiChild Create [o] where 
-  mkFieldJoin cnj _ _ = Join cnj MultiChildV CreateV
-instance (Convertible x SqlValue, Convertible SqlValue x
-         , View o, t' ~ ViewTable o
-         ) => FieldJoin t' x MultiChild Ignore [o] where 
-  mkFieldJoin cnj _ _ = Join cnj MultiChildV IgnoreV
 
 mkAbstractView :: Name -> Name -> Q [Dec]
 mkAbstractView nm nm' =
@@ -346,12 +295,15 @@ mkAbstractView' (DataD _ rnm rpars _ _) (DataD _ anm _ _ _) =
                     [ TySynInstD (mkName "ViewTable") [foldl AppT (ConT rnm) $ map VarT ps] $ foldl AppT (ConT anm) (map VarT ps)
                     , FunD (mkName "viewQuery")
                         [Clause [] (NormalB $ foldl AppE (ConE $ mkName "ViewQuery") 
-                                    [ VarE $ mkName "fromAbstract"
-                                    , VarE $ mkName "toAbstractInsert"
-                                    , ListE []]) []]
+                                    [ VarE (mkName "emptyData") `AppE` ConE (mkName $ nameBase rnm)
+                                    , VarE (mkName "abstractViewFields") ]) []]
                     ]
-            ]
+              ]
 mkAbstractView' _ _ = error "Error in arguments to mkAbstractView'"
+
+abstractViewFields :: (Record a, AbstractType v a) => [ViewField v a]
+abstractViewFields = collect mkField $ zip1 Tup1 recordFields (zip1 Tup1 concreteLenses abstractLenses)
+  where mkField (Tup1 Field (Tup1 cl (ALens al))) = ViewField cl (Base al) Default
 
 class Empty f a | f -> a where emptyData :: f -> a
 instance Empty b c => Empty (a -> b) c where emptyData f = emptyData $ f undefined

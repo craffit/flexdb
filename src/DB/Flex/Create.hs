@@ -15,55 +15,15 @@ import Data.Label.Util
 import DB.Flex.Config
 import DB.Flex.Monad
 import DB.Flex.Record
-import DB.Flex.Query.Base
+import DB.Flex.Table
+import DB.Flex.Query.Base (BaseExpr, runBaseExpr)
 import DB.Flex.Query.Core
 import DB.Flex.Query
 
-
-import Language.Haskell.TH
+import Language.Haskell.TH hiding (Exp)
 import Language.Haskell.TH.Util
 
 import Safe
-
-data Action = None | Restrict | SetNull | SetDefault | Cascade deriving Eq
-
-instance Show Action where
-  show None       = "no action"
-  show Restrict   = "restrict"
-  show SetNull    = "set null"
-  show SetDefault = "set default"
-  show Cascade    = "cascade"
-
-data FieldOpt a  where
-  Nullable :: FieldOpt a
-  NotNull  :: FieldOpt a
-  Def      :: (MeetAggr i Single ~ Single) => Expr i l a -> FieldOpt a
-  Primary  :: FieldOpt a
-  Unique   :: FieldOpt a
-  Foreign  :: Table t => t :> a -> Action -> FieldOpt a
-  Type     :: String -> FieldOpt a
-  Check    :: (SingleExpr l a -> SingleExpr l Bool) -> FieldOpt a
-
-instance Eq (FieldOpt a) where
-  Nullable  == Nullable = True
-  NotNull   == NotNull  = True
-  (Def a)   == (Def b)  = expString a == expString b
-  Primary   == Primary  = True
-  Unique    == Unique   = True
-  (Foreign (l :: t :> x) a) == (Foreign (l' :: t' :> x') a')  =
-    let nms  = fieldNames :: t FieldName
-        nms' = fieldNames :: t' FieldName
-    in a == a' && tableName nms == tableName nms' && unFieldName (nms |.| l) == unFieldName (nms' |.| l')
-  (Type a)  == (Type b) = a == b
-  (Check f) == (Check f') = expString (f (pureExp "field")) == expString (f' (pureExp "field"))
-  _ == _ = False
-
-data FieldOpts a = FieldOpts { fieldOpts :: [FieldOpt a] }
-
-data TableOpt t where
-  TableUnique  :: [Label t] -> TableOpt t
-  TablePrimary :: [Label t] -> TableOpt t
-  TableCheck   :: (t (SingleExpr l) -> SingleExpr l Bool) -> TableOpt t
 
 renderCreate :: forall a. Table a => a FieldOpts -> [TableOpt a] -> BaseExpr String
 renderCreate fOpts tbOpts =

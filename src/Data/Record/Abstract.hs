@@ -1,12 +1,16 @@
 {-# OPTIONS -fno-warn-orphans #-}
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies, TemplateHaskell
-           , StandaloneDeriving, KindSignatures, FlexibleInstances, CPP #-}
+           , StandaloneDeriving, KindSignatures, FlexibleInstances, CPP
+           , TypeOperators #-}
 module Data.Record.Abstract where
 
 import Control.Monad.Identity
 
 import Data.Functor
 import Data.Label
+import qualified Data.Label.Abstract as A
+import Data.Label.Derive
+import Data.Label.Util
 
 import Data.UUID
 import Data.Functor1
@@ -17,9 +21,11 @@ import Data.Zippable1
 import Language.Haskell.TH
 import Language.Haskell.TH.Util
 
-class AbstractType v a | v -> a, a -> v where
-  toAbstract    :: v -> a Identity
-  fromAbstract  :: a Identity -> v
+class Zippable1 a => AbstractType v a | v -> a, a -> v where
+  toAbstract      :: v -> a Identity 
+  fromAbstract    :: a Identity -> v
+  abstractLenses  :: a ((:>:) a)
+  concreteLenses  :: a (A.Lens (->) v)
 
 data AbstractVal a f = AbstractVal { _realVal :: f a } deriving (Show, Eq)
 
@@ -39,28 +45,40 @@ instance Traversable1 (AbstractVal a) where
 
 
 instance AbstractType Int (AbstractVal Int) where
-  toAbstract   = AbstractVal . Identity
-  fromAbstract = runIdentity . get realVal
+  toAbstract     = AbstractVal . Identity
+  fromAbstract   = runIdentity . get realVal
+  abstractLenses = AbstractVal $ ALens realVal 
+  concreteLenses = AbstractVal $ lens id (const id)
 
 instance AbstractType String (AbstractVal String) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
+  abstractLenses = AbstractVal $ ALens realVal 
+  concreteLenses = AbstractVal $ lens id (const id)
 
 instance AbstractType UUID (AbstractVal UUID) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
+  abstractLenses = AbstractVal $ ALens realVal 
+  concreteLenses = AbstractVal $ lens id (const id)
 
 instance AbstractType Integer (AbstractVal Integer) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
+  abstractLenses = AbstractVal $ ALens realVal 
+  concreteLenses = AbstractVal $ lens id (const id)
 
 instance AbstractType Float (AbstractVal Float) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
+  abstractLenses = AbstractVal $ ALens realVal 
+  concreteLenses = AbstractVal $ lens id (const id)
 
 instance AbstractType Double (AbstractVal Double) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
+  abstractLenses = AbstractVal $ ALens realVal 
+  concreteLenses = AbstractVal $ lens id (const id)
 
 {-
 data Pair1 a b (f :: * -> *) = Pair1 { _fst1 :: a f, _snd1 :: b f }
@@ -94,33 +112,43 @@ mkAbstractType :: Name -> Q [Dec]
 mkAbstractType = withTyConReify mkAbstractType'
 
 mkAbstractType' :: Dec -> Q [Dec]
-mkAbstractType' (DataD ctx tnm pars cons _) =
+mkAbstractType' dec@(DataD ctx tnm pars [RecC cnm flds] _) =
   do names <- mapM newName $ map (('v':) . show) [1..(30 :: Int)]
-     let aName nm = mkName $ nameBase nm ++ "'"
+     let aName nm  = mkName $ nameBase nm ++ "'"
          aField nm = mkName $ nameBase nm ++ "'"
-         parNames = map getTV pars
-         appType cnm = foldl AppT (ConT cnm) . map VarT
-         f = mkName "f"
-         mkCons (NormalC cnm flds) = NormalC (aName cnm) $ map (\(st,t) -> (st, (VarT f) `AppT` t)) flds
-         mkCons (RecC cnm flds)    = RecC (aName cnm) $ map (\(fnm,st,t) -> (aField fnm, st, (VarT f) `AppT` t)) flds
-         mkCons x = error $ "Cannot handle constructor " ++ show x ++ " in mkAbstractType'"
-         toClause con =
-           let (cnm, tps) = getCons con
-           in Clause [ConP cnm $ map VarP $ take (length tps) names]
-                     (NormalB $ foldl AppE (ConE $ aName cnm) $ map (AppE (ConE (mkName "Identity")) . VarE) $ take (length tps) names) []
-         fromClause con =
-           let (cnm, tps) = getCons con
-           in Clause [ConP (aName cnm) $ map VarP $ take (length tps) names]
-                     (NormalB $ foldl AppE (ConE cnm) $ map (AppE (VarE (mkName "runIdentity")) . VarE) $ take (length tps) names) []
+         parNames  = map getTV pars
+         appType x = foldl AppT (ConT x) . map VarT
+         f         = mkName "f"
+         fieldNames = map (\(n,_,_) -> nameBase n) flds
+
+         constr  = RecC (aName cnm) $ map (\(fnm,st,t) -> (aField fnm, st, (VarT f) `AppT` t)) flds
+
+         toClause =
+              Clause [ConP cnm $ map VarP $ take (length flds) names]
+                     (NormalB $ foldl AppE (ConE $ aName cnm) $ map (AppE (ConE (mkName "Identity")) . VarE) $ take (length flds) names) []
+         fromClause =
+              Clause [ConP (aName cnm) $ map VarP $ take (length flds) names]
+                     (NormalB $ foldl AppE (ConE cnm) $ map (AppE (VarE (mkName "runIdentity")) . VarE) $ take (length flds) names) []
+         abstractLs = Clause []
+                        (NormalB $ foldl AppE (ConE $ aName cnm) $ map (AppE (ConE (mkName "ALens")) . VarE . mkName . defaultMakeLabel . (++ "'")) fieldNames) []
+         concreteLs = Clause []
+                        (NormalB $ foldl AppE (ConE $ aName cnm) $ map (VarE . mkName . defaultMakeLabel) fieldNames) []
+         aData =
 #if __GLASGOW_HASKELL__==706
-     return [ DataD ctx (aName tnm) (pars ++ [KindedTV f $ AppT (AppT ArrowT StarT) StarT]) (map mkCons cons) []
+                  DataD ctx (aName tnm) (pars ++ [KindedTV f $ AppT (AppT ArrowT StarT) StarT]) [constr] []
 #else
-     return [ DataD ctx (aName tnm) (pars ++ [KindedTV f $ ArrowK StarK StarK]) (map mkCons cons) []
+                  DataD ctx (aName tnm) (pars ++ [KindedTV f $ ArrowK StarK StarK]) [constr] []
 #endif
-            , InstanceD []
+     cLabels <- derive1' defaultMakeLabel True False (TyConI dec)
+     aLabels <- derive1' defaultMakeLabel True False (TyConI aData)
+     return $ [ aData
+              , InstanceD []
                 (ConT (mkName "AbstractType") `AppT` appType tnm parNames `AppT` appType (aName tnm) parNames)
-                [ FunD (mkName "toAbstract") (map toClause cons)
-                , FunD (mkName "fromAbstract") (map fromClause cons)
+                [ FunD (mkName "toAbstract") [toClause]
+                , FunD (mkName "fromAbstract") [fromClause]
+                , FunD (mkName "abstractLenses") [abstractLs]
+                , FunD (mkName "concreteLenses") [concreteLs]
                 ]
-            ]
+              ] ++ aLabels ++ cLabels
+
 mkAbstractType' _ = error "Can only create an abstract type for Data declarations"

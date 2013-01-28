@@ -16,7 +16,7 @@ module DB.Flex.Query.Typed
    
    , asc, desc, order, limit, offset
    
-   , now, timeofday
+   , now, timeofday, dbTrue, dbFalse
    
    , constant, con, con', isNull, notNull, _default, toAbstractInsert, defaultInsert, ignore, emptyUpdate, isDefault, isIgnore
    
@@ -186,7 +186,7 @@ group (Exp e) =
 groupAll :: Record r => r (SingleExpr l) -> Query Aggr l (r (AggrExpr l))
 groupAll = traverse1 group
 
--- | Basic expressions
+-- | Basic values
 
 now :: Expr Constant l UTCTime
 now = Exp  $ return $ return "now()"
@@ -194,6 +194,11 @@ now = Exp  $ return $ return "now()"
 timeofday :: Expr Constant l String
 timeofday = Exp $ return $ return "timeofday()"
 
+dbTrue :: Expr Constant l Bool
+dbTrue = Exp $ return $ return "true"
+
+dbFalse :: Expr Constant l Bool
+dbFalse = Exp $ return $ return "false"
 
 -----------------------------------------------------------
 -- Expressions
@@ -319,13 +324,13 @@ notin e q = binOp "not in" e $ Exp $ fmap snd $ renderSubExp (fmap AbstractVal q
 -----------------------------------------------------------
 
 -- | The default value of the column. Only works with 'insert'.
-_default :: InsertExpr i a
+_default :: InsertExpr i l a
 _default = Exp $ return $ return "DEFAULT"
 
-defaultInsert :: forall t . Table t => t (InsertExpr Single)
+defaultInsert :: forall t l. Table t => t (InsertExpr Single l)
 defaultInsert = fmap1 (const _default) (recordFields :: t Field)
 
-toAbstractInsert :: (Record t, AbstractType a t) => a -> t (InsertExpr i)
+toAbstractInsert :: (Record t, AbstractType a t) => a -> t (InsertExpr i l)
 toAbstractInsert = zip1 (\Field (Identity v) -> con' v) recordFields . toAbstract
 
 ignore :: UpdateExpr a
@@ -334,7 +339,7 @@ ignore = Exp $ return $ return "IGNORE"
 emptyUpdate :: forall t. Table t => t UpdateExpr
 emptyUpdate = fmap1 (const ignore) (recordFields :: t Field)
 
-isDefault :: InsertExpr i a -> Bool
+isDefault :: InsertExpr i l a -> Bool
 isDefault = expEquals "DEFAULT"
 
 isIgnore :: UpdateExpr a -> Bool
@@ -447,7 +452,7 @@ query' q =
   let (rec, bq) = runQuery $ q >>= mapM queryExp . collect bExp
   in map buildRecord <$> B.baseQuery bq (sequence rec)
 
-insert' :: forall i r. Table r => Query i Z (r (InsertExpr i)) -> Db [r Identity]
+insert' :: forall i r. Table r => Query i Z (r (InsertExpr i Z)) -> Db [r Identity]
 insert' q =
   let (rec, bq) = runQuery $ q >>= mapM queryExp . collect bExp
       nms       = names (undefined :: r a)

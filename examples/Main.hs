@@ -4,7 +4,7 @@
 module Main where
 
 import Control.Monad
-import DB.Flex
+import DB.Flex hiding (password, user)
 import Data.Convertible
 import Data.UUID
 import Data.Label
@@ -31,7 +31,6 @@ data User =
     } deriving (Eq, Show)
 
 $( mkTable (withCase "user" "users" mkField) ''User )
-$( mkLabels [''User, ''User'] )
 
 userTable :: User' FieldOpts
 userTable =
@@ -54,7 +53,6 @@ data Document =
     } deriving (Eq, Show)
 
 $( mkTable mkField ''Document )
-$( mkLabels [''Document, ''Document' ])
 
 documentTable :: Document' FieldOpts
 documentTable =
@@ -63,8 +61,8 @@ documentTable =
     , _name'     = FieldOpts []
     , _owner'    = FieldOpts [Foreign uuid' Cascade]
     , _content'  = FieldOpts []
-    , _created'  = FieldOpts [NotNull, Def now]
-    , _modified' = FieldOpts [NotNull, Def now]
+    , _created'  = FieldOpts [Def now]
+    , _modified' = FieldOpts [Def now]
     }
 
 data Role = Reader | Writer | Administrator deriving (Eq, Show, Read)
@@ -82,7 +80,6 @@ data Permission =
     } deriving (Eq, Show)
 
 $( mkTable mkField ''Permission )
-$( mkLabels [''Permission, ''Permission' ])
 
 permissionTable :: Permission' FieldOpts
 permissionTable =
@@ -241,11 +238,11 @@ data UserInfo p d =
 
 $( mkLabel ''UserInfo )
 
-instance ( FieldJoin Permission'  UUID MultiChild Create p
-         , FieldJoin Document'    UUID MultiChild Create d
+instance ( FieldJoin Permission'  UUID MultiChild p
+         , FieldJoin Document'    UUID MultiChild d
          ) => View (UserInfo p d) where
   type ViewTable (UserInfo p d) = User'
-  viewQuery = ViewQuery (const $ emptyData UserInfo) (const defaultInsert)
+  viewQuery = ViewQuery (emptyData UserInfo)
                 [ uName        |= alias'
                 , uEmail       |= email'
                 , uPermissions |+ mkFieldJoin (uuid' >-< user')  MultiChild Create

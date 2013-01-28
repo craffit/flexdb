@@ -75,7 +75,7 @@ runExp = fst . flip runState 0 . bExp
 
 -- | Short-hands for most occurring types
 type Expr         = Exp Value
-type InsertExpr i = Exp Insert i Z
+type InsertExpr   = Exp Insert
 type SortExpr     = Exp Sort
 type UpdateExpr   = Exp Update Single Z
 

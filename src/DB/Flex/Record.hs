@@ -93,7 +93,6 @@ class Record t => Table t where
   tableName    :: t v -> String
   fieldNames   :: t FieldName
 
-
 instance DBType a => Record (AbstractVal a) where
   recordFields = AbstractVal Field
 

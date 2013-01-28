@@ -22,6 +22,7 @@ Library
                       DB.Flex.Config
                       DB.Flex.Create
                       DB.Flex.Monad
+                      DB.Flex.Table
                       DB.Flex.Query
                       DB.Flex.Query.Ancestry
                       DB.Flex.Query.Ontology

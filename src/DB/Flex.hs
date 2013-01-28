@@ -11,7 +11,8 @@ module DB.Flex
    , module DB.Flex.Record
    , module DB.Flex.Monad
    , module DB.Flex.Config
-   
+   , module DB.Flex.Table
+
    , module Control.Applicative
    , Identity(..)
    ) where
@@ -27,6 +28,7 @@ import DB.Flex.Create
 import DB.Flex.Query
 import DB.Flex.Record
 import DB.Flex.Monad
+import DB.Flex.Table
 import DB.Flex.Config
 
 import Control.Applicative
