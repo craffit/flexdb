@@ -69,7 +69,7 @@ instance Table t => TableDef t
 filterRecord :: forall t i l. TableDef t => t (InsertExpr Single l) -> t (Expr Single l) -> Query i l ()
 filterRecord dat q =
   let mkQ :: Exp Insert Single l a -> Expr Single l a -> Query i l ()
-      mkQ (Exp e1) (Exp e2) = restrict $ Exp $ binOp "==" <$> e1 <*> e2
+      mkQ (Exp e1) (Exp e2) = restrict $ Exp $ binOp "=" <$> e1 <*> e2
 
       fieldQ :: Tup1 (InsertExpr Single l) (Tup1 (Expr Single l) FieldOpts) a -> Maybe (Query i l ())
       fieldQ (Tup1 d (Tup1 e (FieldOpts ops))) = 
@@ -87,8 +87,8 @@ filterRecord dat q =
           else Just $ sequence_ $ map (\(Label l) -> mkQ (dat |.| l) (q |.| l)) lbs
 
       allQ = if and (collect (not . isDefault) dat)
-              then Nothing
-              else Just $ sequence_ $ collect (\(Tup1 d e) -> mkQ d e) $ zip1 Tup1 dat q
+              then Just $ sequence_ $ collect (\(Tup1 d e) -> mkQ d e) $ zip1 Tup1 dat q
+              else Nothing
 
   in head $ catMaybes $
               collect fieldQ (zip1 Tup1 dat (zip1 Tup1 q fieldOpts))
