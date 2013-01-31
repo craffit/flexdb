@@ -4,7 +4,8 @@
 module Main where
 
 import Control.Monad
-import DB.Flex hiding (password, user)
+import DB.Flex.Config hiding (user, name)
+import DB.Flex
 import Data.Convertible
 import Data.UUID
 import Data.Label
@@ -16,8 +17,12 @@ import Language.Haskell.TH hiding (Foreign)
 import Safe
 import System.Random
 
-conf = Config "database" "user" "password" (Just "localhost") (Just 5432)
+-- conf = Config "database" "user" "password" (Just "localhost") (Just 5432)
+conf = Config "test" "silk" "s1lK5iLk!" (Just "localhost") Nothing
 runTest = runDbWith conf
+
+zeTable :: IO [String]
+zeTable = fmap (map pprint) $ runQ $ retrieveTable "users" "User" baseIdent baseTypeInfo conf
 
 -- | Example data definitions
 
@@ -32,15 +37,14 @@ data User =
 
 $( mkTable (withCase "user" "users" mkField) ''User )
 
-userTable :: User' FieldOpts
-userTable =
-  User'
-    { _uuid'       = FieldOpts [Primary]
-    , _alias'      = FieldOpts []
-    , _email'      = FieldOpts [Unique]
-    , _password'   = FieldOpts []
-    , _registered' = FieldOpts [Def now]
-    }
+instance TableDef User' where
+  fieldOpts = User'
+                { _uuid'       = FieldOpts [Primary]
+                , _alias'      = FieldOpts []
+                , _email'      = FieldOpts [Unique]
+                , _password'   = FieldOpts []
+                , _registered' = FieldOpts [Def now]
+                }
 
 data Document =
   Document
@@ -54,16 +58,17 @@ data Document =
 
 $( mkTable mkField ''Document )
 
-documentTable :: Document' FieldOpts
-documentTable =
-  Document'
-    { _did'      = FieldOpts [Type "serial",Primary]
-    , _name'     = FieldOpts []
-    , _owner'    = FieldOpts [Foreign uuid' Cascade]
-    , _content'  = FieldOpts []
-    , _created'  = FieldOpts [Def now]
-    , _modified' = FieldOpts [Def now]
-    }
+instance TableDef Document' where
+  tableOpts = [ TableUnique [Label name', Label owner']
+              , TableCheck $ \tab -> tab |.| created' .<=. tab |.| modified']
+  fieldOpts = Document'
+                { _did'      = FieldOpts [Type "serial",Primary]
+                , _name'     = FieldOpts []
+                , _owner'    = FieldOpts [Foreign uuid' Cascade]
+                , _content'  = FieldOpts []
+                , _created'  = FieldOpts [Def now]
+                , _modified' = FieldOpts [Def now]
+                }
 
 data Role = Reader | Writer | Administrator deriving (Eq, Show, Read)
 
@@ -81,14 +86,14 @@ data Permission =
 
 $( mkTable mkField ''Permission )
 
-permissionTable :: Permission' FieldOpts
-permissionTable =
-  Permission'
-    { _pid'      = FieldOpts [Type "serial", Primary]
-    , _role'     = FieldOpts []
-    , _user'     = FieldOpts [Foreign uuid' Cascade]
-    , _document' = FieldOpts [Foreign did' Cascade]
-    }
+instance TableDef Permission' where
+  tableOpts = [TableUnique [Label user', Label document']]
+  fieldOpts = Permission'
+                { _pid'      = FieldOpts [Type "serial", Primary]
+                , _role'     = FieldOpts []
+                , _user'     = FieldOpts [Foreign uuid' Cascade]
+                , _document' = FieldOpts [Foreign did' Cascade]
+                }
 
 -- | Creating a database
 
@@ -97,10 +102,9 @@ createDB =
   do runTest $ do dropTable (Proxy :: Proxy (Permission' f))
                   dropTable (Proxy :: Proxy (Document' f))
                   dropTable (Proxy :: Proxy (User' f))
-                  createTable userTable []
-                  createTable documentTable [ TableUnique [Label name', Label owner']
-                                            , TableCheck $ \tab -> tab |.| created' .<=. tab |.| modified']
-                  createTable permissionTable [TableUnique [Label user', Label document']]
+                  createTable (Proxy :: Proxy (User' f))
+                  createTable (Proxy :: Proxy (Document' f))
+                  createTable (Proxy :: Proxy (Permission' f))
 
 -- | Storing data
 
@@ -221,7 +225,7 @@ mostOwned =
        fromU <- group $ users |.| email'
        let dCount = count (docs |.| did')
        having $ dCount .>. con 1
-       order    $ desc $ dCount
+       order  $ desc $ dCount
        return $ DocCount' fromU dCount
 
 userDocs :: String -> IO [Document]
@@ -249,5 +253,64 @@ instance ( FieldJoin Permission'  UUID MultiChild p
                 , uDocuments   |+ mkFieldJoin (uuid' >-< owner') MultiChild Create
                 ]
 
+userInfo :: String -> Db (Maybe (UserInfo [Permission] [Document]))
+userInfo = fmap headMay . queryView . selector
+
 users :: IO [UserInfo [Permission] [Document]]
 users = runTest queryAll
+
+retrieveUser :: UserInfo () () -> IO [User]
+retrieveUser = runTest . query . viewRecord
+
+data DocumentInfo u p =
+  DocumentInfo
+    { _docName       :: String
+    , _docOwner      :: u
+    , _docContent    :: String
+    , _docCreated    :: UTCTime
+    , _docModified   :: UTCTime
+    , _docPermissions :: p
+    } deriving (Show, Eq)
+
+$( mkLabel ''DocumentInfo )
+
+instance ( FieldJoin Permission'  Int  MultiChild p
+         , FieldJoin User'        UUID Parent     u
+         ) => View (DocumentInfo u p) where
+  type ViewTable (DocumentInfo u p) = Document'
+  viewQuery = ViewQuery (emptyData DocumentInfo)
+                [ docName        |= name'
+                , docOwner       |+ mkFieldJoin (owner' >-< uuid')  Parent Relate
+                , docContent     |= content'
+                , docCreated     |= created'
+                , docModified    |? modified'
+                , docPermissions |+ mkFieldJoin (did' >-< document')  MultiChild Create
+                ]
+
+userViewDocs :: String -> IO [DocumentInfo User [Permission]]
+userViewDocs = runTest . queryView . (selectorChildren <=< selector)
+
+data PermissionInfo u d =
+  PermissionInfo
+    { _permUser :: u
+    , _permDoc  :: d
+    , _permRole :: Role
+    } deriving (Eq, Show)
+
+$( mkLabel ''PermissionInfo )
+
+instance ( FieldJoin Document'  Int  Parent d
+         , FieldJoin User'      UUID Parent u
+         ) => View (PermissionInfo u d) where
+  type ViewTable (PermissionInfo u d) = Permission'
+  viewQuery = ViewQuery (emptyData PermissionInfo)
+                [ permUser  |+ mkFieldJoin (user' >-< uuid')    Parent Relate
+                , permDoc   |+ mkFieldJoin (document' >-< did') Parent Create
+                , permRole  |= role'
+                ]
+
+userDocument :: String -> String -> Db (Maybe (DocumentInfo User [PermissionInfo User ()]))
+userDocument u d = fmap headMay $ queryView $ record u d
+
+copyDocument :: String -> String -> String -> IO ()
+copyDocument u d d' = runTest $ userDocument u d >>= maybe (return ()) (insertView . set docName d')
