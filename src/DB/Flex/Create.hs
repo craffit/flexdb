@@ -25,9 +25,11 @@ import Language.Haskell.TH.Util
 
 import Safe
 
-renderCreate :: forall a. Table a => a FieldOpts -> [TableOpt a] -> BaseExpr String
-renderCreate fOpts tbOpts =
-  let mkForeign (Foreign (l :: (t :> x)) ac) =
+renderCreate :: forall a f. TableDef a => Proxy (a f)  -> BaseExpr String
+renderCreate _ =
+  let tbOpts = tableOpts :: [TableOpt a]
+      fOpts  = fieldOpts :: a FieldOpts
+      mkForeign (Foreign (l :: (t :> x)) ac) =
          let nms = fieldNames :: t FieldName
          in Just $ "references " ++ tableName nms ++ " (" ++ unFieldName (nms |.| l) ++ ") on delete " ++ show ac
       mkForeign _ = Nothing
@@ -68,8 +70,8 @@ renderCreate fOpts tbOpts =
             , return ")"
             ]
 
-createTable :: forall a . Table a => a FieldOpts -> [TableOpt a] -> Db ()
-createTable fOpts tbOpts = fmap (const ()) $ runBaseExpr $ renderCreate fOpts tbOpts
+createTable :: forall a f. TableDef a => Proxy (a f) -> Db ()
+createTable = fmap (const ()) . runBaseExpr . renderCreate
 
 dropTable :: forall a f. Table a => Proxy (a f) -> Db ()
 dropTable _ = fmap (const ()) $ querySql ("drop table if exists " ++ tableName (fieldNames :: a FieldName)) []
