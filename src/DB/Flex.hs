@@ -10,11 +10,13 @@ module DB.Flex
    , module DB.Flex.Query
    , module DB.Flex.Record
    , module DB.Flex.Monad
-   , module DB.Flex.Config
    , module DB.Flex.Table
 
    , module Control.Applicative
    , Identity(..)
+   
+   , UUID
+   , UTCTime
    ) where
 
 import Data.Foldable1
@@ -24,12 +26,14 @@ import Data.Zippable1
 import Data.Record.Abstract
 import Data.Label.Util
 
+import Data.UUID
+import Data.Time.Clock
+
 import DB.Flex.Create
 import DB.Flex.Query
 import DB.Flex.Record
 import DB.Flex.Monad
 import DB.Flex.Table
-import DB.Flex.Config
 
 import Control.Applicative
 import Control.Monad.Identity
