@@ -4,7 +4,7 @@
            , UndecidableInstances, TypeSynonymInstances, TupleSections, TypeFamilies
            , TemplateHaskell, EmptyDataDecls, Rank2Types #-}
 module DB.Flex.Query.Typed
-   ( query, insert, update, delete
+   ( query, insert, insertMany, update, delete
    
    , restrict, having, sieve, tableSieve, unique, forUpdate, forShare
    
@@ -27,7 +27,7 @@ module DB.Flex.Query.Typed
 
    , (|.|), (|->|), (|->>|), cast
    
-   , query', insert', update', delete'
+   , query', insert', insertMany', update', delete'
    
    , Query, Exp, Expr, InsertExpr, SortExpr, UpdateExpr, ConstantExpr, SingleExpr, AggrExpr
    
@@ -50,6 +50,7 @@ import Data.Convertible
 import Data.Label
 import Data.List hiding (union, intersect, group, delete, insert)
 import Data.Time.Clock
+import Data.Tuple
 import Database.HDBC
 import DB.Flex.Monad
 import DB.Flex.Record
@@ -459,6 +460,13 @@ insert' q =
       tname     = tableName (undefined :: r a)
   in map buildRecord <$> B.baseInsert bq tname (zip nms rec)
 
+insertMany' :: forall i r. Table r => [Query i Z (r (InsertExpr i Z))] -> Db [[r Identity]]
+insertMany' qs =
+  let qs'   = map (\q -> fmap (zip nms) $ swap $ runQuery $ q >>= mapM queryExp . collect bExp) qs
+      nms   = names (undefined :: r a)
+      tname = tableName (undefined :: r a)
+  in map (map buildRecord) <$> B.baseInsertMany tname qs'
+
 update' :: forall t. Table t => (t (SingleExpr Z) -> Query Single Z (t UpdateExpr)) -> Db [t Identity]
 update' qf =
   let tname     = tableName (undefined :: t a)
@@ -480,6 +488,10 @@ query = fmap (map fromAbstract) . query'
 insert :: (Table r,  AbstractType a r, MeetType t Insert ~ Insert) 
        => Query i Z (r (Exp t i l)) -> Db [a]
 insert = fmap (map fromAbstract) . insert' . fmap (fmap1 castExp)
+
+insertMany :: (Table r,  AbstractType a r, MeetType t Insert ~ Insert) 
+           => [Query i Z (r (Exp t i l))] -> Db [[a]]
+insertMany = fmap (map $ map fromAbstract) . insertMany' . map (fmap (fmap1 castExp))
 
 update :: (Table r, AbstractType a r, MeetType t Update ~ Update) 
        => (r (SingleExpr Z) -> Query Single Z (r (Exp t Single Z))) -> Db [a]

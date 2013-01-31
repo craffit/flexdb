@@ -143,51 +143,45 @@ addInsert i i' | isDefault i' = i
 
 -- | Generic view inserting updating function, takes a list of viewable values and possible pre-filled data
 saveView :: forall a. View a
-         => Query Single Z (ViewTable a (InsertExpr Single Z)) -> [a] -> Db [(a, ViewTable a Identity)]
-saveView ini vs =
+         => [(Query Single Z (ViewTable a (InsertExpr Single Z)), a)] -> Db [[ViewTable a Identity]]
+saveView inf =
   do let ViewQuery _ fields = viewQuery :: ViewQuery a (ViewTable a)
-         ini' :: [(a, Query Single Z (ViewTable a (InsertExpr Single Z)))]
-         ini'   = map (flip (,) ini) vs
+         (inis, vs) = unzip inf
      -- Set field values and create/join parents
-     qs <- foldrM' ini' fields $ \(ViewField field fType def) ac ->
+     qs' <- foldrM' inis fields $ \(ViewField field fType def) qs ->
               case (def, fType) of
                 (NoDefault, Base f) -> 
-                    return $ flip map ac $ \(a, q) ->
-                               (a, modify f (addInsert (con' $ a |.| field)) `liftM` q)
+                    return $ zipWith (\a -> liftM $ modify f (addInsert (con' $ a |.| field))) vs qs
                 (NoDefault, Join (Conj fromField toField) ParentV Create) ->
-                    forM ac $ \(a,q) ->
-                             do [(_,x)] <- saveView (return defaultInsert) [a |.| field]
-                                return ( a
-                                       , do r <- q
-                                            case isDefault (r |.| fromField) of 
-                                              False -> return r
-                                              True -> return $ fromField |->| (constant $ runIdentity $ x |.| toField) $ r
-                                       )
+                    -- Note: parents will always override default query.
+                    do ps <- map head `liftM` saveView (map ((,) (return defaultInsert) . get field) vs)
+                       return $ zipWith (\p -> liftM $ fromField |->>| runIdentity (p |.| toField)) ps qs
                 (NoDefault, Join (Conj fromField toField) ParentV Relate) ->
-                    return $ flip map ac $ \(a,q) ->
-                                      ( a
-                                      , do ins <- q
+                    return $ zipWith (\a q ->
+                                        do ins <- q
                                            case isDefault (ins |.| fromField) of 
                                              False -> return ins
                                              True -> do relPar <- table >>= filterView (a |.| field)
                                                         return $ fromField |->| (relPar |.| toField) $ ins
-                                      )
-                _ -> return ac
+                                     ) vs qs
+                _ -> return qs
      -- Insert rows
-     rs <- fmap concat $ forM qs $ \(a, q) -> fmap (map ((,) a)) $ insert' q
+     rs <- insertMany' qs'
      -- Create children
      forM_ fields $ \(ViewField field fType _) ->
-       forM_ rs $ \(a, r) ->
-         let value   = get field a
-         in case fType of
+            case fType of
              (Join (Conj fromField toField) (pType :: Relation o o') Create) ->
-               let insertE :: ViewTable o (InsertExpr Single Z)
-                   insertE = toField |->>| (runIdentity $ r |.| fromField) $ defaultInsert
-               in case pType of
-                    SingleChildV -> saveView (return insertE) [value] >> return ()
-                    OptionChildV -> saveView (return insertE) (maybeToList value) >> return ()
-                    MultiChildV  -> saveView (return insertE) value >> return ()
-                    _            -> return ()
+               let vals :: [o']
+                   vals = map (get field) vs
+                   listVals :: [[o]]
+                   listVals = case pType of
+                                SingleChildV -> map (:[]) vals
+                                OptionChildV -> map maybeToList vals
+                                MultiChildV  -> vals
+                                _            -> []
+                   insertE :: [[Query Single Z (ViewTable o (InsertExpr Single Z))]]
+                   insertE = map (map $ \r -> return $ toField |->>| runIdentity (r |.| fromField) $ defaultInsert) rs
+               in saveView (concat $ zipWith (liftM2 (,)) insertE listVals) >> return ()
              _ -> return ()
      return rs
 
@@ -198,6 +192,11 @@ performViewUpdate :: forall a. View a
            -> a -> Db [ViewTable a Identity]
 performViewUpdate fun a =
   do let ViewQuery _ fields = viewQuery :: ViewQuery a (ViewTable a)
+{-     fun' <- foldrM' fun fields $ \(ViewField field fType def) q' ->
+              case (def, fType) of
+                (NoDefault, Join (Conj fromField toField) ParentV Relate) ->
+                _ -> return q'
+-}
      -- Set field values and update/join parents
      q <- foldrM' fun fields $ \(ViewField field fType def) q' ->
               case (def, fType) of
@@ -211,6 +210,9 @@ performViewUpdate fun a =
      -- Update rows
      update' q 
 
+viewRecord :: View a => a -> Query i l (ViewTable a (SingleExpr l))
+viewRecord a = table >>= filterView a
+
 -- | Query a table and marshal using View
 queryView :: View a => Query i Z (ViewTable a (Expr i Z)) -> Db [a]
 queryView = fmap (map snd) . performViewQuery
@@ -221,7 +223,7 @@ queryAll = queryView table
 
 -- | Insert a list of values with some default values pre-filled
 insertViews' :: View a => Query Single Z (ViewTable a (InsertExpr Single Z)) -> [a] -> Db ()
-insertViews' v vs = saveView v vs >> return ()
+insertViews' v vs = saveView (map ((,) v) vs) >> return ()
 
 -- | Insert a list of value
 insertViews :: View a => [a] -> Db ()
@@ -240,13 +242,13 @@ updateView' :: View a => a -> Db Int
 updateView' a = fmap length $ performViewUpdate (\v -> filterView a v >> return emptyUpdate) a
 
 -- | Update a value using its own reference.
-updateView :: View a => a -> Db Int
-updateView a = fmap length $ performViewUpdate (\v -> filterView a v >> return emptyUpdate) a
+updateView :: View a => a -> a -> Db Int
+updateView a a' = fmap length $ performViewUpdate (\v -> filterView a v >> return emptyUpdate) a'
 
 -- | Update and if that fail, create
 updateOrCreate :: View a => a -> Db ()
 updateOrCreate a =
-  do r <- updateView a
+  do r <- updateView' a
      when (r == 0) (insertView a)
 
 data  Parent      = Parent     
@@ -272,13 +274,13 @@ instance (Convertible x SqlValue, Eq x)
       => FieldJoin t' x SingleChild x  where mkFieldJoin (Conj from _) _ _ = Base from
 
 instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x Parent o where 
-  mkFieldJoin cnj _ _ = Join cnj ParentV Create
+  mkFieldJoin cnj _ = Join cnj ParentV
 instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x SingleChild o where 
-  mkFieldJoin cnj _ _ = Join cnj SingleChildV Create
+  mkFieldJoin cnj _ = Join cnj SingleChildV
 instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x OptionChild (Maybe o) where 
-  mkFieldJoin cnj _ _ = Join cnj OptionChildV Create
+  mkFieldJoin cnj _ = Join cnj OptionChildV
 instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x MultiChild [o] where 
-  mkFieldJoin cnj _ _ = Join cnj MultiChildV Create
+  mkFieldJoin cnj _ = Join cnj MultiChildV
 
 
 mkAbstractView :: Name -> Name -> Q [Dec]
@@ -303,7 +305,7 @@ mkAbstractView' _ _ = error "Error in arguments to mkAbstractView'"
 
 abstractViewFields :: (Record a, AbstractType v a) => [ViewField v a]
 abstractViewFields = collect mkField $ zip1 Tup1 recordFields (zip1 Tup1 concreteLenses abstractLenses)
-  where mkField (Tup1 Field (Tup1 cl (ALens al))) = ViewField cl (Base al) Default
+  where mkField (Tup1 Field (Tup1 cl (ALens al))) = ViewField cl (Base al) NoDefault
 
 class Empty f a | f -> a where emptyData :: f -> a
 instance Empty b c => Empty (a -> b) c where emptyData f = emptyData $ f undefined

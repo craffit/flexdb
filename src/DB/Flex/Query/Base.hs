@@ -2,12 +2,14 @@
 module DB.Flex.Query.Base where
 
 import Control.Applicative
+import Control.Arrow
 import Data.List hiding (group)
 import Control.Monad
 import Control.Monad.State hiding (get)
 import qualified Control.Monad.State as ST
 import Database.HDBC
 import Data.Label hiding (for)
+import Data.Function
 
 import DB.Flex.Monad
 
@@ -27,7 +29,7 @@ value v =
 infixl 5 <>, <->
 
 (<>) :: BaseExpr String -> BaseExpr String -> BaseExpr String
-(<>) = liftM2 (++) 
+(<>) = liftM2 (++)
 
 (<->) :: BaseExpr String -> BaseExpr String -> BaseExpr String
 a <-> b = a <> return " " <> b
@@ -59,8 +61,8 @@ data BaseQuery =
     , _offset   :: Maybe Int
     , _unique   :: Bool
     , _group    :: [BaseExpr String]
-    , _order    :: [BaseExpr String] 
-    , _for      :: Maybe String 
+    , _order    :: [BaseExpr String]
+    , _for      :: Maybe String
     }
 
 $( mkLabel ''BaseQuery )
@@ -131,14 +133,24 @@ renderDelete bq tab res =
             ]
 
 runBaseExpr :: BaseExpr String -> Db [[SqlValue]]
--- runBaseExpr = uncurry querySql . flip runState [] 
-runBaseExpr = (\v -> unsafeIOToDb (print $ v) >> uncurry querySql v) . flip runState []
+-- runBaseExpr = uncurry querySql . flip runState []
+runBaseExpr = (\v -> unsafeIOToDb (print v) >> uncurry querySql v) . flip runState []
+
+batchBaseExpr :: [BaseExpr String] -> Db [[[SqlValue]]]
+batchBaseExpr = fmap concat
+              . mapM ( (\v -> unsafeIOToDb (print $ fst v) >> uncurry executeBatch v)
+                     . ((head . fst) &&& snd) . unzip)
+              . groupBy ((==) `on` fst)
+              . map (flip runState [])
 
 baseQuery :: BaseQuery -> BaseExpr [String] -> Db [[SqlValue]]
 baseQuery bq proj = runBaseExpr (renderQuery bq proj)
 
 baseInsert :: BaseQuery -> String -> [(String, BaseExpr String)] -> Db [[SqlValue]]
 baseInsert bq tab flds = runBaseExpr (renderInsert bq tab flds)
+
+baseInsertMany :: String -> [(BaseQuery, [(String, BaseExpr String)])] -> Db [[[SqlValue]]]
+baseInsertMany tab = batchBaseExpr . map (\(bq, flds) -> renderInsert bq tab flds)
 
 baseUpdate :: BaseQuery -> String -> [(String, BaseExpr String)] -> Db [[SqlValue]]
 baseUpdate bq tab flds = runBaseExpr (renderUpdate bq tab flds)

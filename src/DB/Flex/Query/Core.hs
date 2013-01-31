@@ -114,7 +114,6 @@ queryExp e =
      put (st { alias = a })
      return ex
 
-
 runQueryAlias :: Int -> Query i l a -> (a, QState i l)
 runQueryAlias a = flip runState (QState a $ BaseQuery [] (return "true") (return "true") Nothing Nothing False [] [] Nothing)
 

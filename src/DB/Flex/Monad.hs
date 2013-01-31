@@ -20,6 +20,7 @@ module DB.Flex.Monad
   , prepareSql
   , execute
   , executeMany
+  , executeBatch
   , fetchRow
 
   , MonadDb (..)
@@ -46,7 +47,7 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Trans.Control
 import Control.Monad.Writer
-import Database.HDBC (SqlValue, Statement, commit, fromSql, prepare, quickQuery', rollback, run, toSql)
+import Database.HDBC (SqlValue, Statement, commit, fromSql, prepare, quickQuery', rollback, run, toSql, fetchAllRows)
 import Database.HDBC.PostgreSQL
 import System.Log.Logger
 import qualified Database.HDBC as HDBC
@@ -175,3 +176,10 @@ executeMany q = unsafeIOToDb . HDBC.executeMany q
 
 fetchRow :: Statement -> Db (Maybe [SqlValue])
 fetchRow = unsafeIOToDb . HDBC.fetchRow
+
+executeBatch :: String -> [[SqlValue]] -> Db [[[SqlValue]]]
+executeBatch q vs =
+  do st <- prepareSql q
+     forM vs $ \v ->
+       do _ <- execute st v
+          unsafeIOToDb $ fetchAllRows st
