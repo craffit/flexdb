@@ -104,10 +104,10 @@ retrieveTable :: String -> String -> (String -> String) -> (SqlTypeId -> String)
 retrieveTable tbl hnm mkI mkT conf =
   do cols <- runIO $ withConnection conf $ flip describeTable tbl
      let mkCol (col, cDesc) = addNullable (fromMaybe True $ colNullable cDesc)
-                                      (mkName $ mkI col, NotStrict, ConT $ mkName $ mkT $ colType cDesc)
+                                      (mkName $ legitField $ mkI col, NotStrict, ConT $ mkName $ mkT $ colType cDesc)
          addNullable True  (n, s, t) = (n, s, AppT (ConT $ mkName "Maybe") t)
          addNullable False v         = v
-     let dat  = DataD [] (mkName hnm) [] [RecC (mkName hnm) (map mkCol cols)] [mkName "Show", mkName "Eq"]
+     let dat  = DataD [] (mkName $ legitData hnm) [] [RecC (mkName $ legitData hnm) (map mkCol cols)] [mkName "Show", mkName "Eq"]
      rec <- dbRecord' dat
      viewInst <- mkAbstractView' dat (head rec)
      let anm = (\(DataD _ v _ _ _) -> v) $ head rec
@@ -151,16 +151,26 @@ baseTypeInfo SqlGUIDT              = "UUID"
 baseTypeInfo (SqlUnknownT "2950")  = "UUID"
 baseTypeInfo (SqlUnknownT _)       = "SqlValue" 
 
+baseIdent :: String -> String
+baseIdent = ("_" ++) . legitField
+
+legitField :: String -> String
+legitField = firstDown . filter (\x -> isAlphaNum x || x == '_')
+
+legitData :: String -> String
+legitData = firstUp . filter (\x -> isAlphaNum x || x == '_')
+
 withCase :: Eq r => r -> r -> (a -> r) -> a -> r
 withCase a r f a' | f a' == a = r
                   | otherwise = f a'
 
-baseIdent :: String -> String
-baseIdent = ("_" ++) . firstDown . mkData
-
 firstDown :: String -> String
 firstDown [] = []
 firstDown (x:xs) = toLower x: xs
+
+firstUp :: String -> String
+firstUp [] = []
+firstUp (x:xs) = toUpper x: xs
 
 mkData :: String -> String
 mkData ('_' : x : xs) = toUpper x : mkData xs
