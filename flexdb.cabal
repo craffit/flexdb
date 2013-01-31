@@ -8,7 +8,7 @@ Author:              Bram Schuur
 Maintainer:          bram@typlab.com
 Category:            Debug
 Build-type:          Simple
-Cabal-version:       >=1.6
+Cabal-version:       >=1.8
 
 Library
   exposed-modules:    Data.Label.Util
@@ -40,7 +40,7 @@ Library
                      , convertible == 1.0.*
                      , fclabels
                      , ghc-prim
-                     , HDBC
+                     , HDBC == 2.3.*
                      , HDBC-postgresql
                      , hslogger
                      , mtl
@@ -54,3 +54,18 @@ Library
                      
   hs-source-dirs:      src
   ghc-options          : -Wall
+
+Executable generate-db
+  Build-depends:
+        base >= 3 && <= 5
+      , config-opts
+      , flexdb == 0.1
+      , template-haskell
+      , HDBC == 2.3.*
+      , fclabels == 1.1.*
+      , filepath == 1.3.*
+      , split == 0.2.*
+  Hs-Source-Dirs: exe
+  Main-is:        Generate.hs
+  GHC-Options:    -Wall
+
