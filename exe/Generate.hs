@@ -24,7 +24,7 @@ mkModule :: Config -> String -> IO ()
 mkModule config tbl =
   do let repl  = replaceFunc (get replaces config)
          dName = firstUp $ repl tbl
-     decs <- runQ $ retrieveTable tbl (dName) (baseIdent . repl) baseTypeInfo $ get dbConfig config
+     decs <- runQ $ retrieveTable tbl dName (baseIdent . repl) baseTypeInfo $ get dbConfig config
      writeFile (get target config </> (dName ++ ".hs")) $
        intercalate "\n" $
          [ "{-# LANGUAGE RankNTypes, KindSignatures, FlexibleContexts, MultiParamTypeClasses, NoMonomorphismRestriction, TypeFamilies, UndecidableInstances, OverlappingInstances #-}"

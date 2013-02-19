@@ -21,12 +21,9 @@ import System.Random
 conf = Config "test" "silk" "s1lK5iLk!" (Just "localhost") Nothing
 runTest = runDbWith conf
 
-zeTable :: IO [String]
-zeTable = fmap (map pprint) $ runQ $ retrieveTable "users" "User" baseIdent baseTypeInfo conf
-
 -- | Example data definitions
 
-data User = 
+data User =
   User
     { _uuid       :: UUID
     , _alias      :: String
@@ -116,7 +113,7 @@ newUser nm ml pw =
 
 
 newDocument :: String -> String -> String -> IO [Document]
-newDocument doc cont usr = runTest $ 
+newDocument doc cont usr = runTest $
     insert $ do user <- tableSieve $ \tab -> tab |.| email' .==. con usr
                 return $ name'     |->>| doc
                        $ content'  |->>| cont
@@ -125,7 +122,7 @@ newDocument doc cont usr = runTest $
 
 
 newPermission :: String -> String -> String -> Role -> IO [Permission]
-newPermission docOwner doc usr rol = runTest $ 
+newPermission docOwner doc usr rol = runTest $
         insert $ do user    <- tableSieve $ \tab -> tab |.| email' .==. con usr
                     docUser <- tableSieve $ \tab -> tab |.| email' .==. con docOwner
                     docu    <- tableSieve $ \tab -> tab |.| name'  .==. con doc
@@ -182,11 +179,11 @@ instance ChildSelector Document' where
 -- | The ontology can be used to write shorter queries
 
 newDocument' :: String -> String -> String -> IO [Document]
-newDocument' doc cont usr = 
+newDocument' doc cont usr =
   runTest $ insert $ withParent (selector usr) $ name' |->>| doc $ content' |->>| cont $ defaultInsert
 
 newPermission' :: String -> String -> String -> Role -> IO [Permission]
-newPermission' docOwner doc usr rol = runTest $ 
+newPermission' docOwner doc usr rol = runTest $
         insert $ do user    <- selector usr
                     docu    <- selector docOwner >>= child doc
                     return $ role'     |->>| rol
@@ -202,7 +199,7 @@ permittedDocuments = did' >*< document' <=< user' >*< uuid' <=< selector
 
 administratorDocuments :: String -> Query i l (Document' (SingleExpr l))
 administratorDocuments = did' >*< document'
-                     <=< sieve (\tab -> tab |.| role' .==. con Administrator) 
+                     <=< sieve (\tab -> tab |.| role' .==. con Administrator)
                      <=< user' >*< uuid'
                      <=< selector
 

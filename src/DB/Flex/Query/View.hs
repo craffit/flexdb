@@ -20,7 +20,7 @@ import Data.Foldable1
 import DB.Flex.Table
 import DB.Flex.Monad
 import DB.Flex.Record
-import DB.Flex.Query.Typed 
+import DB.Flex.Query.Typed
 import qualified Data.Map as M
 
 import Language.Haskell.TH
@@ -37,7 +37,7 @@ class (TableDef (ViewTable a), Eq a) => View a where
   viewQuery :: ViewQuery a (ViewTable a)
 
 -- | A view query is just a list of 'Fields' which can be specified.
-data ViewQuery a t = 
+data ViewQuery a t =
   ViewQuery
     { emptyView  :: a
     , viewFields :: [ViewField a t]
@@ -56,7 +56,7 @@ data ViewField a t where
 --
 -- The Base constructor means that a field in the view is taken directly from the table
 --
--- The Join constructor describes that the value for this field comes from another table. 
+-- The Join constructor describes that the value for this field comes from another table.
 -- It specifies two join fields and the relation that this join with the other table.
 
 data FieldType t v where
@@ -150,7 +150,7 @@ saveView inf =
      -- Set field values and create/join parents
      qs' <- foldrM' inis fields $ \(ViewField field fType def) qs ->
               case (def, fType) of
-                (NoDefault, Base f) -> 
+                (NoDefault, Base f) ->
                     return $ zipWith (\a -> liftM $ modify f (addInsert (con' $ a |.| field))) vs qs
                 (NoDefault, Join (Conj fromField toField) ParentV Create) ->
                     -- Note: parents will always override default query.
@@ -159,7 +159,7 @@ saveView inf =
                 (NoDefault, Join (Conj fromField toField) ParentV Relate) ->
                     return $ zipWith (\a q ->
                                         do ins <- q
-                                           case isDefault (ins |.| fromField) of 
+                                           case isDefault (ins |.| fromField) of
                                              False -> return ins
                                              True -> do relPar <- table >>= filterView (a |.| field)
                                                         return $ fromField |->| (relPar |.| toField) $ ins
@@ -208,7 +208,7 @@ performViewUpdate fun a =
                                    return $ fromField |->| (relPar |.| toField) $ upd
                 _ -> return q'
      -- Update rows
-     update' q 
+     update' q
 
 viewRecord :: View a => a -> Query i l (ViewTable a (SingleExpr l))
 viewRecord a = table >>= filterView a
@@ -251,35 +251,35 @@ updateOrCreate a =
   do r <- updateView' a
      when (r == 0) (insertView a)
 
-data  Parent      = Parent     
+data  Parent      = Parent
 data  SingleChild = SingleChild
 data  OptionChild = OptionChild
-data  MultiChild  = MultiChild 
+data  MultiChild  = MultiChild
 
 -- | This type class allows the construction of flexible views: a view which is dependent
--- on the type. 
+-- on the type.
 class Eq v => FieldJoin t' x m v where
-  mkFieldJoin :: (Ord x, DBType x) 
+  mkFieldJoin :: (Ord x, DBType x)
               => (t :><: t') x -> m -> Creation -> FieldType t v
 
 instance FieldJoin t' x m () where mkFieldJoin _ _ _ = Empty
 instance FieldJoin t' x Parent      () where mkFieldJoin _ _ _ = Empty
 instance FieldJoin t' x SingleChild () where mkFieldJoin _ _ _ = Empty
 
-instance (Convertible x SqlValue, Eq x) 
+instance (Convertible x SqlValue, Eq x)
       => FieldJoin t' x m x  where mkFieldJoin (Conj from _) _ _ = Base from
-instance (Convertible x SqlValue, Eq x) 
+instance (Convertible x SqlValue, Eq x)
       => FieldJoin t' x Parent x  where mkFieldJoin (Conj from _) _ _ = Base from
-instance (Convertible x SqlValue, Eq x) 
+instance (Convertible x SqlValue, Eq x)
       => FieldJoin t' x SingleChild x  where mkFieldJoin (Conj from _) _ _ = Base from
 
-instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x Parent o where 
+instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x Parent o where
   mkFieldJoin cnj _ = Join cnj ParentV
-instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x SingleChild o where 
+instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x SingleChild o where
   mkFieldJoin cnj _ = Join cnj SingleChildV
-instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x OptionChild (Maybe o) where 
+instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x OptionChild (Maybe o) where
   mkFieldJoin cnj _ = Join cnj OptionChildV
-instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x MultiChild [o] where 
+instance (DBType x, View o, t' ~ ViewTable o) => FieldJoin t' x MultiChild [o] where
   mkFieldJoin cnj _ = Join cnj MultiChildV
 
 
@@ -296,7 +296,7 @@ mkAbstractView' (DataD _ rnm rpars _ _) (DataD _ anm _ _ _) =
                     (ConT (mkName "View") `AppT` (foldl AppT (ConT rnm) $ map VarT ps))
                     [ TySynInstD (mkName "ViewTable") [foldl AppT (ConT rnm) $ map VarT ps] $ foldl AppT (ConT anm) (map VarT ps)
                     , FunD (mkName "viewQuery")
-                        [Clause [] (NormalB $ foldl AppE (ConE $ mkName "ViewQuery") 
+                        [Clause [] (NormalB $ foldl AppE (ConE $ mkName "ViewQuery")
                                     [ VarE (mkName "emptyData") `AppE` ConE (mkName $ nameBase rnm)
                                     , VarE (mkName "abstractViewFields") ]) []]
                     ]
