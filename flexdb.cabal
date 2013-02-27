@@ -38,7 +38,7 @@ Library
   build-depends:       base >= 3 && <= 5
                      , containers
                      , convertible == 1.0.*
-                     , fclabels
+                     , fclabels == 1.1.4.100
                      , ghc-prim
                      , HDBC == 2.3.*
                      , HDBC-postgresql

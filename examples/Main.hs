@@ -17,8 +17,7 @@ import Language.Haskell.TH hiding (Foreign)
 import Safe
 import System.Random
 
--- conf = Config "database" "user" "password" (Just "localhost") (Just 5432)
-conf = Config "test" "silk" "s1lK5iLk!" (Just "localhost") Nothing
+conf = Config "database" "user" "password" (Just "localhost") (Just 5432)
 runTest = runDbWith conf
 
 -- | Example data definitions
