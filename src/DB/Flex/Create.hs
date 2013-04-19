@@ -12,7 +12,6 @@ import Data.Foldable1
 import Data.Zippable1
 import Data.Label.Util
 
-import DB.Flex.Config
 import DB.Flex.Monad
 import DB.Flex.Record
 import DB.Flex.Table
@@ -41,17 +40,17 @@ renderCreate _ =
         in fmap (intercalate " ") $ sequence
                     [ return nm
                     , return $ headDef defType $ [ v | Type v <- ops ]
-                    , return $ if any (==Nullable) ops || (all (/=NotNull) ops && defNullable) 
-                                then "null" 
+                    , return $ if any (==Nullable) ops || (all (/=NotNull) ops && defNullable)
+                                then "null"
                                 else "not null"
-                    , fromMaybe (return "") $ headMay $ 
-                          [ fmap (\e -> "default (" ++ e ++ ")") $ runExp v 
+                    , fromMaybe (return "") $ headMay $
+                          [ fmap (\e -> "default (" ++ e ++ ")") $ runExp v
                           | Def v <- ops ]
                     , return $ if any (==Primary) ops then "primary key" else ""
                     , return $ if any (==Unique) ops then "unique" else ""
                     , return $ intercalate " " $ catMaybes $ map mkForeign ops
-                    , fmap (intercalate " ") $ sequence $ 
-                          [ fmap (\e -> "check (" ++ e ++ ")") $ runExp (f (pureExp nm)) 
+                    , fmap (intercalate " ") $ sequence $
+                          [ fmap (\e -> "check (" ++ e ++ ")") $ runExp (f (pureExp nm))
                           | Check f <- ops ]
                     ]
 
@@ -61,9 +60,9 @@ renderCreate _ =
 
   in fmap (intercalate " ") $ sequence
             [ return $ "create table if not exists " ++ tableName fOpts ++ " ("
-            , fmap (intercalate ", ") $ sequence $ 
-                (collect unConstVal 
-                  $ zip1 (\(FieldName nm) (Tup1 Field (FieldOpts ops)) -> ConstVal $ renderFieldOpt nm ops) fieldNames 
+            , fmap (intercalate ", ") $ sequence $
+                (collect unConstVal
+                  $ zip1 (\(FieldName nm) (Tup1 Field (FieldOpts ops)) -> ConstVal $ renderFieldOpt nm ops) fieldNames
                   $ zip1 Tup1 recordFields fOpts)
                 ++
                 map renderTableOpt tbOpts
@@ -79,9 +78,9 @@ dropTable _ = fmap (const ()) $ querySql ("drop table if exists " ++ tableName (
 -- | Generate table instance from a datatype
 
 mkTable :: (String -> String) -> Name -> Q [Dec]
-mkTable f n = 
+mkTable f n =
   do TyConI d <- reify n
-     rec  <- dbRecord' d 
+     rec  <- dbRecord' d
      inst <- mkTableFields f (head rec)
      viewInst <- mkAbstractView' d (head rec)
      return $ rec ++ inst ++ viewInst
@@ -89,7 +88,7 @@ mkTable f n =
 mkTableFields :: (String -> String) -> Dec -> Q [Dec]
 mkTableFields mkId (DataD _ tnm pars [RecC cns fs] _) =
      let ps = reverse $ tail $ reverse $ map getTV pars
-         fieldNs = map (\(n,_,_) -> mkId (show n)) fs 
+         fieldNs = map (\(n,_,_) -> mkId (show n)) fs
          inst = InstanceD [] (ConT (mkName "Table") `AppT` (foldl AppT (ConT tnm) $ map VarT ps))
                    [FunD (mkName "tableName") [Clause [WildP] (NormalB $ LitE $ StringL $ mkId $ show tnm) []]
                    ,FunD (mkName "fieldNames")
@@ -100,9 +99,9 @@ mkTableFields _ _ = error "Not a valid datatype in mkTableFields"
 
 -- | Generate a table datatype from a remote Postgres database
 
-retrieveTable :: String -> String -> (String -> String) -> (SqlTypeId -> String) -> Config -> Q [Dec]
-retrieveTable tbl hnm mkI mkT conf =
-  do cols <- runIO $ withConnection conf $ flip describeTable tbl
+retrieveTable :: String -> String -> (String -> String) -> (SqlTypeId -> String) -> IO ConnWrapper -> Q [Dec]
+retrieveTable tbl hnm mkI mkT conn =
+  do cols <- runIO $ conn >>= flip describeTable tbl
      let mkCol (col, cDesc) = addNullable (fromMaybe True $ colNullable cDesc)
                                       (mkName $ legitField $ mkI col, NotStrict, ConT $ mkName $ mkT $ colType cDesc)
          addNullable True  (n, s, t) = (n, s, AppT (ConT $ mkName "Maybe") t)
@@ -120,36 +119,36 @@ retrieveTable tbl hnm mkI mkT conf =
 
 -- | Mapping SQL types to Haskell types
 baseTypeInfo :: SqlTypeId -> String
-baseTypeInfo SqlCharT              = "String"     
-baseTypeInfo SqlVarCharT           = "String"     
-baseTypeInfo SqlLongVarCharT       = "String"     
-baseTypeInfo SqlWCharT             = "String"     
-baseTypeInfo SqlWVarCharT          = "String"     
-baseTypeInfo SqlWLongVarCharT      = "String"     
-baseTypeInfo SqlDecimalT           = "Integer"    
-baseTypeInfo SqlNumericT           = "Integer" 
-baseTypeInfo SqlSmallIntT          = "Int"     
-baseTypeInfo SqlIntegerT           = "Int"     
+baseTypeInfo SqlCharT              = "String"
+baseTypeInfo SqlVarCharT           = "String"
+baseTypeInfo SqlLongVarCharT       = "String"
+baseTypeInfo SqlWCharT             = "String"
+baseTypeInfo SqlWVarCharT          = "String"
+baseTypeInfo SqlWLongVarCharT      = "String"
+baseTypeInfo SqlDecimalT           = "Integer"
+baseTypeInfo SqlNumericT           = "Integer"
+baseTypeInfo SqlSmallIntT          = "Int"
+baseTypeInfo SqlIntegerT           = "Int"
 baseTypeInfo SqlRealT              = "Double"
-baseTypeInfo SqlFloatT             = "Double"  
-baseTypeInfo SqlDoubleT            = "Double"  
-baseTypeInfo SqlBitT               = "Bool"    
-baseTypeInfo SqlTinyIntT           = "Int"     
-baseTypeInfo SqlBigIntT            = "Integer"    
-baseTypeInfo SqlBinaryT            = "ByteString" 
-baseTypeInfo SqlVarBinaryT         = "ByteString" 
-baseTypeInfo SqlLongVarBinaryT     = "ByteString" 
-baseTypeInfo SqlDateT              = "UTCTime"    
-baseTypeInfo SqlTimeT              = "UTCTime"    
-baseTypeInfo SqlTimeWithZoneT      = "UTCTime"    
-baseTypeInfo SqlTimestampT         = "UTCTime"    
-baseTypeInfo SqlTimestampWithZoneT = "UTCTime"    
-baseTypeInfo SqlUTCDateTimeT       = "UTCTime"    
-baseTypeInfo SqlUTCTimeT           = "UTCTime"    
-baseTypeInfo (SqlIntervalT _)      = "SqlValue" 
-baseTypeInfo SqlGUIDT              = "UUID"     
+baseTypeInfo SqlFloatT             = "Double"
+baseTypeInfo SqlDoubleT            = "Double"
+baseTypeInfo SqlBitT               = "Bool"
+baseTypeInfo SqlTinyIntT           = "Int"
+baseTypeInfo SqlBigIntT            = "Integer"
+baseTypeInfo SqlBinaryT            = "ByteString"
+baseTypeInfo SqlVarBinaryT         = "ByteString"
+baseTypeInfo SqlLongVarBinaryT     = "ByteString"
+baseTypeInfo SqlDateT              = "UTCTime"
+baseTypeInfo SqlTimeT              = "UTCTime"
+baseTypeInfo SqlTimeWithZoneT      = "UTCTime"
+baseTypeInfo SqlTimestampT         = "UTCTime"
+baseTypeInfo SqlTimestampWithZoneT = "UTCTime"
+baseTypeInfo SqlUTCDateTimeT       = "UTCTime"
+baseTypeInfo SqlUTCTimeT           = "UTCTime"
+baseTypeInfo (SqlIntervalT _)      = "SqlValue"
+baseTypeInfo SqlGUIDT              = "UUID"
 baseTypeInfo (SqlUnknownT "2950")  = "UUID"
-baseTypeInfo (SqlUnknownT _)       = "SqlValue" 
+baseTypeInfo (SqlUnknownT _)       = "SqlValue"
 
 baseIdent :: String -> String
 baseIdent = ("_" ++) . legitField

@@ -5,9 +5,9 @@
 module DB.Flex.Query.Ancestry where
 
 import Control.Monad
+import Database.HDBC
 import Data.Convertible
 import Data.Label.Util
-import DB.Flex.Monad
 import DB.Flex.Record
 import DB.Flex.Query.Ontology
 import DB.Flex.Query.Typed

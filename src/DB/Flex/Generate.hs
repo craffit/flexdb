@@ -1,30 +1,40 @@
-module Main where
+{-# LANGUAGE
+    TypeOperators
+  , TemplateHaskell
+  #-}
+module DB.Flex.Generate where
 
-import Config
 import Data.Label
 import Data.List
 import Data.Maybe
 import Database.HDBC
 import DB.Flex.Create
-import DB.Flex.Monad
 import Language.Haskell.TH
 import System.FilePath
 
-main :: IO ()
-main =
-  do config <- getConfig
-     putStrLn "Retrieving tables"
-     tbs <- withConnection (get dbConfig config) getTables
-     mapM_ (mkModule config) tbs
+data Config = Config
+  { _target     :: String
+  , _baseModule :: String
+  , _includes   :: [String]
+  , _configFile :: String
+  , _replaces   :: [(String, String)]
+  } deriving Show
+
+$( mkLabels [''Config] )
 
 replaceFunc :: [(String, String)] -> String -> String
 replaceFunc vs v = fromMaybe v $ lookup v vs
 
-mkModule :: Config -> String -> IO ()
-mkModule config tbl =
+generateBindings :: Config -> ConnWrapper -> IO ()
+generateBindings config conn =
+    do tbs <- getTables conn
+       mapM_ (mkModule config conn) tbs
+
+mkModule :: Config -> ConnWrapper -> String -> IO ()
+mkModule config conn tbl =
   do let repl  = replaceFunc (get replaces config)
          dName = firstUp $ repl tbl
-     decs <- runQ $ retrieveTable tbl dName (baseIdent . repl) baseTypeInfo $ get dbConfig config
+     decs <- runQ $ retrieveTable tbl dName (baseIdent . repl) baseTypeInfo (return conn)
      writeFile (get target config </> (dName ++ ".hs")) $
        intercalate "\n" $
          [ "{-# LANGUAGE RankNTypes, KindSignatures, FlexibleContexts, MultiParamTypeClasses, NoMonomorphismRestriction, TypeFamilies, UndecidableInstances, OverlappingInstances #-}"

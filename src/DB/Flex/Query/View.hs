@@ -7,6 +7,8 @@ module DB.Flex.Query.View where
 import Control.Arrow
 import Control.Monad.Identity hiding (forM_)
 
+import Database.HDBC
+
 import Data.Convertible
 import Data.Label
 import Data.Label.Util

@@ -5,9 +5,9 @@ module DB.Flex.Query.Ontology where
 
 import Data.Convertible
 import Data.Label.Util
-import DB.Flex.Monad
 import DB.Flex.Record
 import DB.Flex.Query.Typed
+import Database.HDBC
 
 {-
 data OneToOne     = OneToOne

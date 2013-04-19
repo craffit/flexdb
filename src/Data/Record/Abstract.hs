@@ -139,8 +139,8 @@ mkAbstractType' dec@(DataD ctx tnm pars [RecC cnm flds] _) =
 #else
                   DataD ctx (aName tnm) (pars ++ [KindedTV f $ ArrowK StarK StarK]) [constr] []
 #endif
-     cLabels <- derive1' defaultMakeLabel True False (TyConI dec)
-     aLabels <- derive1' defaultMakeLabel True False (TyConI aData)
+     cLabels <- gDerive defaultMakeLabel True False (TyConI dec)
+     aLabels <- gDerive defaultMakeLabel True False (TyConI aData)
      return $ [ aData
               , InstanceD []
                 (ConT (mkName "AbstractType") `AppT` appType tnm parNames `AppT` appType (aName tnm) parNames)

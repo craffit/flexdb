@@ -1,7 +1,7 @@
 Name:                flexdb
 Version:             0.1
-Synopsis:            A simple functional relational mapper.
-Description:         A simple functional relational mapper.
+Synopsis:            A functional relational mapper.
+Description:         A functional relational mapper.
 License:             BSD3
 License-file:        LICENSE
 Author:              Bram Schuur
@@ -19,16 +19,16 @@ Library
                       Data.Zippable1
                       
                       DB.Flex
-                      DB.Flex.Config
                       DB.Flex.Create
+                      DB.Flex.Generate
                       DB.Flex.Monad
-                      DB.Flex.Table
                       DB.Flex.Query
                       DB.Flex.Query.Ancestry
                       DB.Flex.Query.Ontology
                       DB.Flex.Query.Typed
                       DB.Flex.Query.View
                       DB.Flex.Record
+                      DB.Flex.Table
                       
                       Language.Haskell.TH.Util
 
@@ -38,34 +38,17 @@ Library
   build-depends:       base >= 3 && <= 5
                      , containers
                      , convertible == 1.0.*
-                     , fclabels == 1.1.4.100
+                     , fclabels >= 1.1.5
+                     , filepath == 1.3.*
                      , ghc-prim
                      , HDBC == 2.3.*
-                     , HDBC-postgresql
-                     , hslogger
-                     , mtl
-                     , monad-control 
+                     , mtl 
                      , safe == 0.3.*
+                     , split == 0.2.*
                      , tagged 
                      , template-haskell
                      , time
                      , uuid
-                     , transformers-base == 0.4.*
                      
   hs-source-dirs:      src
   ghc-options          : -Wall
-
-Executable generate-db
-  Build-depends:
-        base >= 3 && <= 5
-      , config-opts
-      , flexdb == 0.1
-      , template-haskell
-      , HDBC == 2.3.*
-      , fclabels == 1.1.*
-      , filepath == 1.3.*
-      , split == 0.2.*
-  Hs-Source-Dirs: exe
-  Main-is:        Generate.hs
-  GHC-Options:    -Wall
-

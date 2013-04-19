@@ -4,21 +4,27 @@
 module Main where
 
 import Control.Monad
-import DB.Flex.Config hiding (user, name)
 import DB.Flex
 import Data.Convertible
 import Data.UUID
 import Data.Label
 import Data.Time.Clock
 import Data.Proxy
+import Database.HDBC
+import Database.HDBC.PostgreSQL
 
 import Language.Haskell.TH hiding (Foreign)
 
 import Safe
 import System.Random
 
-conf = Config "database" "user" "password" (Just "localhost") (Just 5432)
-runTest = runDbWith conf
+-- | This example assumes a postgres database with user test:test and database test. To create this issue
+-- the following commands from the psql shell (psql from the command line)
+--
+-- create user test with password 'test';
+-- create database test owner test;
+
+runTest db = connectPostgreSQL "dbname=test user=test password=test host=localhost" >>= flip runDbIO_ db
 
 -- | Example data definitions
 
