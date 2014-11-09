@@ -296,7 +296,8 @@ mkAbstractView' (DataD _ rnm rpars _ _) (DataD _ anm _ _ _) =
     let ps = map getTV rpars
     in return [InstanceD []
                     (ConT (mkName "View") `AppT` (foldl AppT (ConT rnm) $ map VarT ps))
-                    [ TySynInstD (mkName "ViewTable") [foldl AppT (ConT rnm) $ map VarT ps] $ foldl AppT (ConT anm) (map VarT ps)
+                    [ TySynInstD (mkName "ViewTable") $
+                        TySynEqn [foldl AppT (ConT rnm) $ map VarT ps] $ foldl AppT (ConT anm) (map VarT ps)
                     , FunD (mkName "viewQuery")
                         [Clause [] (NormalB $ foldl AppE (ConE $ mkName "ViewQuery")
                                     [ VarE (mkName "emptyData") `AppE` ConE (mkName $ nameBase rnm)
@@ -307,7 +308,7 @@ mkAbstractView' _ _ = error "Error in arguments to mkAbstractView'"
 
 abstractViewFields :: (Record a, AbstractType v a) => [ViewField v a]
 abstractViewFields = collect mkField $ zip1 Tup1 recordFields (zip1 Tup1 concreteLenses abstractLenses)
-  where mkField (Tup1 Field (Tup1 cl (ALens al))) = ViewField cl (Base al) NoDefault
+  where mkField (Tup1 Field (Tup1 (ULens cl) (ALens al))) = ViewField cl (Base al) NoDefault
 
 class Empty f a | f -> a where emptyData :: f -> a
 instance Empty b c => Empty (a -> b) c where emptyData f = emptyData $ f undefined

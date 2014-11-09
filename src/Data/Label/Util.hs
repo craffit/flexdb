@@ -19,3 +19,10 @@ flipJoin (Conj a b) = Conj b a
 -- | A lens with existential result type
 data Label a where
   Label :: a :> x -> Label a
+
+-- | Lens with an unapplied subtype
+
+data ULens f o = ULens { uLens :: f :-> o }
+
+ulens :: (f -> o) -> ((o -> o) -> f -> f) -> ULens f o
+ulens get mod = ULens $ lens get mod

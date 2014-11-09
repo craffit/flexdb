@@ -7,10 +7,9 @@ module Data.Record.Abstract where
 import Control.Monad.Identity
 
 import Data.Functor
-import Data.Label
-import qualified Data.Label.Abstract as A
-import Data.Label.Derive
 import Data.Label.Util
+import Data.Label
+import Data.Label.Derive
 
 import Data.UUID
 import Data.Functor1
@@ -25,7 +24,7 @@ class Zippable1 a => AbstractType v a | v -> a, a -> v where
   toAbstract      :: v -> a Identity 
   fromAbstract    :: a Identity -> v
   abstractLenses  :: a ((:>:) a)
-  concreteLenses  :: a (A.Lens (->) v)
+  concreteLenses  :: a (ULens v)
 
 data AbstractVal a f = AbstractVal { _realVal :: f a } deriving (Show, Eq)
 
@@ -48,37 +47,37 @@ instance AbstractType Int (AbstractVal Int) where
   toAbstract     = AbstractVal . Identity
   fromAbstract   = runIdentity . get realVal
   abstractLenses = AbstractVal $ ALens realVal 
-  concreteLenses = AbstractVal $ lens id (const id)
+  concreteLenses = AbstractVal $ ulens id ($)
 
 instance AbstractType String (AbstractVal String) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
   abstractLenses = AbstractVal $ ALens realVal 
-  concreteLenses = AbstractVal $ lens id (const id)
+  concreteLenses = AbstractVal $ ulens id ($)
 
 instance AbstractType UUID (AbstractVal UUID) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
   abstractLenses = AbstractVal $ ALens realVal 
-  concreteLenses = AbstractVal $ lens id (const id)
+  concreteLenses = AbstractVal $ ulens id ($)
 
 instance AbstractType Integer (AbstractVal Integer) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
   abstractLenses = AbstractVal $ ALens realVal 
-  concreteLenses = AbstractVal $ lens id (const id)
+  concreteLenses = AbstractVal $ ulens id ($)
 
 instance AbstractType Float (AbstractVal Float) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
   abstractLenses = AbstractVal $ ALens realVal 
-  concreteLenses = AbstractVal $ lens id (const id)
+  concreteLenses = AbstractVal $ ulens id ($)
 
 instance AbstractType Double (AbstractVal Double) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
   abstractLenses = AbstractVal $ ALens realVal 
-  concreteLenses = AbstractVal $ lens id (const id)
+  concreteLenses = AbstractVal $ ulens id ($)
 
 {-
 data Pair1 a b (f :: * -> *) = Pair1 { _fst1 :: a f, _snd1 :: b f }
@@ -105,9 +104,6 @@ instance (AbstractType a a', AbstractType b b') => AbstractType (a , b) (Pair1 a
   fromAbstract (Pair1 a b) = (fromAbstract a, fromAbstract b)
 -}
 
-deriving instance Show a => Show (Identity a)
-deriving instance Eq a => Eq (Identity a)
-
 mkAbstractType :: Name -> Q [Dec]
 mkAbstractType = withTyConReify mkAbstractType'
 
@@ -130,17 +126,12 @@ mkAbstractType' dec@(DataD ctx tnm pars [RecC cnm flds] _) =
               Clause [ConP (aName cnm) $ map VarP $ take (length flds) names]
                      (NormalB $ foldl AppE (ConE cnm) $ map (AppE (VarE (mkName "runIdentity")) . VarE) $ take (length flds) names) []
          abstractLs = Clause []
-                        (NormalB $ foldl AppE (ConE $ aName cnm) $ map (AppE (ConE (mkName "ALens")) . VarE . mkName . defaultMakeLabel . (++ "'")) fieldNames) []
+                        (NormalB $ foldl AppE (ConE $ aName cnm) $ map (AppE (ConE (mkName "ALens")) . VarE . mkName . defaultNaming . (++ "'")) fieldNames) []
          concreteLs = Clause []
-                        (NormalB $ foldl AppE (ConE $ aName cnm) $ map (VarE . mkName . defaultMakeLabel) fieldNames) []
-         aData =
-#if __GLASGOW_HASKELL__==706
-                  DataD ctx (aName tnm) (pars ++ [KindedTV f $ AppT (AppT ArrowT StarT) StarT]) [constr] []
-#else
-                  DataD ctx (aName tnm) (pars ++ [KindedTV f $ ArrowK StarK StarK]) [constr] []
-#endif
-     cLabels <- gDerive defaultMakeLabel True False (TyConI dec)
-     aLabels <- gDerive defaultMakeLabel True False (TyConI aData)
+                        (NormalB $ foldl AppE (ConE $ aName cnm) $ map (AppE (ConE (mkName "ULens")) . VarE . mkName . defaultNaming) fieldNames) []
+         aData = DataD ctx (aName tnm) (pars ++ [KindedTV f $ AppT (AppT ArrowT StarT) StarT]) [constr] []
+     cLabels <- mkLabelsWithForDec defaultNaming True False False False dec
+     aLabels <- mkLabelsWithForDec defaultNaming True False False False aData
      return $ [ aData
               , InstanceD []
                 (ConT (mkName "AbstractType") `AppT` appType tnm parNames `AppT` appType (aName tnm) parNames)

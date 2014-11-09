@@ -13,7 +13,7 @@ import Data.Proxy
 import Database.HDBC
 import Database.HDBC.PostgreSQL
 
-import Language.Haskell.TH hiding (Foreign)
+import Language.Haskell.TH hiding (Foreign, Role)
 
 import Safe
 import System.Random
