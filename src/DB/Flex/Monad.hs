@@ -6,12 +6,14 @@
            , TypeFamilies
            , GeneralizedNewtypeDeriving
            , Rank2Types
+           , StandaloneDeriving
            #-}
 module DB.Flex.Monad where
 
 
 import Control.Applicative
 import Control.Exception
+import qualified Control.Monad.CatchIO as C
 import Control.Monad.Cont
 import Control.Monad.Error
 import Control.Monad.RWS
@@ -20,14 +22,22 @@ import Database.HDBC hiding (execute)
 import qualified Database.HDBC as HDBC
 
 newtype DbT m a = DbT { unDbT :: ReaderT ConnWrapper m a }
-  deriving (Functor, Applicative, Monad, MonadReader ConnWrapper, MonadFix)
+  deriving (Functor, Applicative, Monad, MonadReader ConnWrapper, MonadFix, C.MonadCatchIO, MonadPlus, MonadIO, Alternative)
 
-type Db = DbT IO
+class (Functor m, MonadIO m) => DbMonad m where
+  askConn :: m ConnWrapper
 
-runDb_ :: HDBC.IConnection c => c -> DbT m a -> m a
-runDb_ conn = flip runReaderT (ConnWrapper conn) . unDbT
+instance (Functor m, MonadIO m) => DbMonad (DbT m) where askConn = ask
+instance (Error e, DbMonad m) => DbMonad (ErrorT e m) where askConn = lift askConn
+instance DbMonad m => DbMonad (ReaderT d m) where askConn = lift askConn
 
-runDbIO_ :: HDBC.IConnection c => c -> Db a -> IO a
+runDb_ :: (MonadIO m, HDBC.IConnection c) => c -> DbT m a -> m a
+runDb_ conn (DbT db) =
+  do res <- runReaderT db (ConnWrapper conn)
+     liftIO $ commit conn
+     return res
+
+runDbIO_ :: HDBC.IConnection c => c -> DbT IO a -> IO a
 runDbIO_ conn db =
   do res <- runDb_ conn db `onException` rollback conn
      commit conn
@@ -45,37 +55,37 @@ catchRecoverableExceptions action handler = action `catches`
   , Handler $ \(e :: SomeException)             -> handler e
   ]
 
-unsafeIOToDb :: IO a -> Db a
-unsafeIOToDb = DbT . liftIO
+unsafeIOToDb :: DbMonad m => IO a -> m a
+unsafeIOToDb = liftIO
 
-runSql :: String -> [SqlValue] -> Db Integer
+runSql :: DbMonad m => String -> [SqlValue] -> m Integer
 runSql q ps =
-  do conn <- ask
+  do conn <- askConn
      unsafeIOToDb $ run conn q ps
 
-runSql_ :: String -> [SqlValue] -> Db ()
+runSql_ :: DbMonad m => String -> [SqlValue] -> m ()
 runSql_ q ps = () <$ runSql q ps
 
-querySql :: String -> [SqlValue] -> Db [[SqlValue]]
+querySql :: DbMonad m => String -> [SqlValue] -> m [[SqlValue]]
 querySql q ps =
-  do conn <- ask
+  do conn <- askConn
      unsafeIOToDb $ quickQuery' conn q ps
 
-prepareSql :: String -> Db Statement
+prepareSql :: DbMonad m => String -> m Statement
 prepareSql q =
-  do conn <- ask
+  do conn <- askConn
      unsafeIOToDb $ prepare conn q
 
-execute :: Statement -> [SqlValue] -> Db Integer
+execute :: DbMonad m =>  Statement -> [SqlValue] -> m Integer
 execute q = unsafeIOToDb . HDBC.execute q
 
-executeMany :: Statement -> [[SqlValue]] -> Db ()
+executeMany :: DbMonad m => Statement -> [[SqlValue]] -> m ()
 executeMany q = unsafeIOToDb . HDBC.executeMany q
 
-fetchRow :: Statement -> Db (Maybe [SqlValue])
+fetchRow :: DbMonad m => Statement -> m (Maybe [SqlValue])
 fetchRow = unsafeIOToDb . HDBC.fetchRow
 
-executeBatch :: String -> [[SqlValue]] -> Db [[[SqlValue]]]
+executeBatch :: DbMonad m => String -> [[SqlValue]] -> m [[[SqlValue]]]
 executeBatch q vs =
   do st <- prepareSql q
      forM vs $ \v ->

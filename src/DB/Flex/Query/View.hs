@@ -120,7 +120,7 @@ filterView :: forall a i l. View a => a -> ViewTable a (SingleExpr l) -> Query i
 filterView a q = viewFilter a q >> return q
 
 -- | Generic function for querying views. Will aggregate all appropriate data as specified in the viewQuery from View
-performViewQuery :: forall a i. View a => Query i Z (ViewTable a (Expr i Z)) -> Db [(ViewTable a Identity, a)]
+performViewQuery :: forall a i m. (DbMonad m, View a) => Query i Z (ViewTable a (Expr i Z)) -> m [(ViewTable a Identity, a)]
 performViewQuery q =
    do dat <- query' q
       let ViewQuery emp fields = viewQuery :: ViewQuery a (ViewTable a)
@@ -144,8 +144,8 @@ addInsert i i' | isDefault i' = i
                | otherwise    = i'
 
 -- | Generic view inserting updating function, takes a list of viewable values and possible pre-filled data
-saveView :: forall a. View a
-         => [(Query Single Z (ViewTable a (InsertExpr Single Z)), a)] -> Db [[ViewTable a Identity]]
+saveView :: forall a m. (View a, DbMonad m)
+         => [(Query Single Z (ViewTable a (InsertExpr Single Z)), a)] -> m [[ViewTable a Identity]]
 saveView inf =
   do let ViewQuery _ fields = viewQuery :: ViewQuery a (ViewTable a)
          (inis, vs) = unzip inf
@@ -189,9 +189,9 @@ saveView inf =
 
 
 -- | Generic view updating function
-performViewUpdate :: forall a. View a
+performViewUpdate :: forall a m. (View a, DbMonad m)
            => (ViewTable a (SingleExpr Z) -> Query Single Z (ViewTable a UpdateExpr))
-           -> a -> Db [ViewTable a Identity]
+           -> a -> m [ViewTable a Identity]
 performViewUpdate fun a =
   do let ViewQuery _ fields = viewQuery :: ViewQuery a (ViewTable a)
 {-     fun' <- foldrM' fun fields $ \(ViewField field fType def) q' ->
@@ -216,39 +216,39 @@ viewRecord :: View a => a -> Query i l (ViewTable a (SingleExpr l))
 viewRecord a = table >>= filterView a
 
 -- | Query a table and marshal using View
-queryView :: View a => Query i Z (ViewTable a (Expr i Z)) -> Db [a]
+queryView :: (View a, DbMonad m) => Query i Z (ViewTable a (Expr i Z)) -> m [a]
 queryView = fmap (map snd) . performViewQuery
 
 -- | Query all elements of a table
-queryAll :: View a => Db [a]
+queryAll :: (View a, DbMonad m) => m [a]
 queryAll = queryView table
 
 -- | Insert a list of values with some default values pre-filled
-insertViews' :: View a => Query Single Z (ViewTable a (InsertExpr Single Z)) -> [a] -> Db ()
+insertViews' :: (DbMonad m, View a) => Query Single Z (ViewTable a (InsertExpr Single Z)) -> [a] -> m ()
 insertViews' v vs = saveView (map ((,) v) vs) >> return ()
 
 -- | Insert a list of value
-insertViews :: View a => [a] -> Db ()
+insertViews :: (DbMonad m, View a) => [a] -> m ()
 insertViews = insertViews' (return defaultInsert)
 
 -- | Insert a 'Viewable' value into its corresponding table
-insertView :: View a => a -> Db ()
+insertView :: (DbMonad m, View a) => a -> m ()
 insertView = insertViews . return
 
 -- | Insert a 'Viewable' value with additional information
-insertView' :: View a => Query Single Z (ViewTable a (InsertExpr Single Z)) -> a -> Db ()
+insertView' :: (DbMonad m, View a) => Query Single Z (ViewTable a (InsertExpr Single Z)) -> a -> m ()
 insertView' q = insertViews' q . return
 
 -- | Update an existing value
-updateView' :: View a => a -> Db Int
+updateView' :: (DbMonad m, View a) => a -> m Int
 updateView' a = fmap length $ performViewUpdate (\v -> filterView a v >> return emptyUpdate) a
 
 -- | Update a value using its own reference.
-updateView :: View a => a -> a -> Db Int
+updateView :: (DbMonad m, View a) => a -> a -> m Int
 updateView a a' = fmap length $ performViewUpdate (\v -> filterView a v >> return emptyUpdate) a'
 
 -- | Update and if that fail, create
-updateOrCreate :: View a => a -> Db ()
+updateOrCreate :: (DbMonad m, View a) => a -> m ()
 updateOrCreate a =
   do r <- updateView' a
      when (r == 0) (insertView a)
@@ -311,6 +311,6 @@ abstractViewFields = collect mkField $ zip1 Tup1 recordFields (zip1 Tup1 concret
   where mkField (Tup1 Field (Tup1 (ULens cl) (ALens al))) = ViewField cl (Base al) NoDefault
 
 class Empty f a | f -> a where emptyData :: f -> a
-instance Empty b c => Empty (a -> b) c where emptyData f = emptyData $ f undefined
+instance Empty b c => Empty (a -> b) c where emptyData f = emptyData $ f (error "Error in empty data")
 instance a ~ b => Empty a b where emptyData = id
 

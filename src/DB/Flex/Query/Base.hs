@@ -132,28 +132,28 @@ renderDelete bq tab res =
             , return $ intercalate "," res
             ]
 
-runBaseExpr :: BaseExpr String -> Db [[SqlValue]]
--- runBaseExpr = uncurry querySql . flip runState []
-runBaseExpr = (\v -> unsafeIOToDb (print v) >> uncurry querySql v) . flip runState []
+runBaseExpr :: DbMonad m => BaseExpr String -> m [[SqlValue]]
+runBaseExpr = uncurry querySql . flip runState []
+-- runBaseExpr = (\v -> unsafeIOToDb (print v) >> uncurry querySql v) . flip runState []
 
-batchBaseExpr :: [BaseExpr String] -> Db [[[SqlValue]]]
+batchBaseExpr :: DbMonad m => [BaseExpr String] -> m [[[SqlValue]]]
 batchBaseExpr = fmap concat
               . mapM ( (\v -> unsafeIOToDb (print $ fst v) >> uncurry executeBatch v)
                      . ((head . fst) &&& snd) . unzip)
               . groupBy ((==) `on` fst)
               . map (flip runState [])
 
-baseQuery :: BaseQuery -> BaseExpr [String] -> Db [[SqlValue]]
+baseQuery :: DbMonad m => BaseQuery -> BaseExpr [String] -> m [[SqlValue]]
 baseQuery bq proj = runBaseExpr (renderQuery bq proj)
 
-baseInsert :: BaseQuery -> String -> [(String, BaseExpr String)] -> Db [[SqlValue]]
+baseInsert :: DbMonad m => BaseQuery -> String -> [(String, BaseExpr String)] -> m [[SqlValue]]
 baseInsert bq tab flds = runBaseExpr (renderInsert bq tab flds)
 
-baseInsertMany :: String -> [(BaseQuery, [(String, BaseExpr String)])] -> Db [[[SqlValue]]]
+baseInsertMany :: DbMonad m => String -> [(BaseQuery, [(String, BaseExpr String)])] -> m [[[SqlValue]]]
 baseInsertMany tab = batchBaseExpr . map (\(bq, flds) -> renderInsert bq tab flds)
 
-baseUpdate :: BaseQuery -> String -> [(String, BaseExpr String)] -> Db [[SqlValue]]
+baseUpdate :: DbMonad m => BaseQuery -> String -> [(String, BaseExpr String)] -> m [[SqlValue]]
 baseUpdate bq tab flds = runBaseExpr (renderUpdate bq tab flds)
 
-baseDelete :: BaseQuery -> String -> [String] -> Db [[SqlValue]]
+baseDelete :: DbMonad m => BaseQuery -> String -> [String] -> m [[SqlValue]]
 baseDelete bq tab res = runBaseExpr (renderDelete bq tab res)

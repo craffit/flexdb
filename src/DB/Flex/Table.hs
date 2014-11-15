@@ -28,14 +28,19 @@ instance Show Action where
   show Cascade    = "cascade"
 
 data FieldOpt a  where
-  Nullable :: FieldOpt a
+  Nullable :: FieldOpt (Maybe a)
   NotNull  :: FieldOpt a
   Def      :: (MeetAggr i Single ~ Single) => Expr i l a -> FieldOpt a
   Primary  :: FieldOpt a
   Unique   :: FieldOpt a
   Foreign  :: Table t => t :> a -> Action -> FieldOpt a
+  ForeignMaybe :: Table t => t :> a -> Action -> FieldOpt (Maybe a)
   Type     :: String -> FieldOpt a
   Check    :: (SingleExpr l a -> SingleExpr l Bool) -> FieldOpt a
+
+isNullable :: FieldOpt a -> Bool
+isNullable Nullable = True
+isNullable _ = False
 
 instance Eq (FieldOpt a) where
   Nullable  == Nullable = True

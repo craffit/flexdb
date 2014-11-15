@@ -22,25 +22,34 @@ import DB.Flex.Query
 import Language.Haskell.TH hiding (Exp)
 import Language.Haskell.TH.Util
 
+import Control.Monad.IO.Class
+import Control.Monad
+
 import Safe
+
+doForeign :: forall t x. TableDef t => t :> x -> Action -> String
+doForeign f act =
+   let nms = fieldNames :: t FieldName
+   in "references " ++ tableName nms ++ " (" ++ unFieldName (nms |.| f) ++ ") on delete " ++ show act
+
+mkForeign :: forall a. FieldOpt a -> Maybe String
+mkForeign (Foreign f act) = Just $ doForeign f act
+mkForeign (ForeignMaybe f act) = Just $ doForeign f act
+mkForeign _ = Nothing
 
 renderCreate :: forall a f. TableDef a => Proxy (a f)  -> BaseExpr String
 renderCreate _ =
   let tbOpts = tableOpts :: [TableOpt a]
       fOpts  = fieldOpts :: a FieldOpts
-      mkForeign (Foreign (l :: (t :> x)) ac) =
-         let nms = fieldNames :: t FieldName
-         in Just $ "references " ++ tableName nms ++ " (" ++ unFieldName (nms |.| l) ++ ") on delete " ++ show ac
-      mkForeign _ = Nothing
 
       renderFieldOpt :: forall x. DBType x => String -> [FieldOpt x] -> BaseExpr String
       renderFieldOpt nm ops =
         let defNullable = nullable (Proxy :: Proxy x)
-            defType     = typeRep (Proxy :: Proxy x)
+            defType     = dbTypeRep (Proxy :: Proxy x)
         in fmap (intercalate " ") $ sequence
                     [ return nm
                     , return $ headDef defType $ [ v | Type v <- ops ]
-                    , return $ if any (==Nullable) ops || (all (/=NotNull) ops && defNullable)
+                    , return $ if any isNullable ops || (all (/=NotNull) ops && defNullable)
                                 then "null"
                                 else "not null"
                     , fromMaybe (return "") $ headMay $
@@ -69,10 +78,34 @@ renderCreate _ =
             , return ")"
             ]
 
-createTable :: forall a f. TableDef a => Proxy (a f) -> Db ()
+getTableName :: forall a f. TableDef a => Proxy (a f) -> String
+getTableName _ =
+  let  -- tbOpts = tableOpts :: [TableOpt a]
+      fOpts  = fieldOpts :: a FieldOpts
+  in tableName fOpts
+
+createTable :: forall a f m. (DbMonad m, TableDef a) => Proxy (a f) -> m ()
 createTable = fmap (const ()) . runBaseExpr . renderCreate
 
-dropTable :: forall a f. Table a => Proxy (a f) -> Db ()
+updateTable :: forall a f m. (DbMonad m, TableDef a) => Proxy (a f) -> m Bool
+updateTable _ =
+  let  -- tbOpts = tableOpts :: [TableOpt a]
+      fOpts  = fieldOpts :: a FieldOpts
+  in do conn <- askConn
+        liftIO $ handleSql (const (return False)) $
+          do cols <- describeTable conn (tableName fOpts)
+             return $ if cols /= [] then True else False
+
+updateOrCreateTable :: forall a f m. (DbMonad m, TableDef a) => Proxy (a f) -> m ()
+updateOrCreateTable p =
+  let name = getTableName p
+  in do liftIO $ putStrLn $ "Updating table " ++ name
+        up <- updateTable p
+        when (not up) $
+          do liftIO $ putStrLn $ "Creating table " ++ name
+             createTable p
+
+dropTable :: forall a f m. (DbMonad m, Table a) => Proxy (a f) -> m ()
 dropTable _ = fmap (const ()) $ querySql ("drop table if exists " ++ tableName (fieldNames :: a FieldName)) []
 
 -- | Generate table instance from a datatype

@@ -20,10 +20,12 @@ import Data.Zippable1
 import Language.Haskell.TH
 import Language.Haskell.TH.Util
 
-class Zippable1 a => AbstractType v a | v -> a, a -> v where
-  toAbstract      :: v -> a Identity 
-  fromAbstract    :: a Identity -> v
+class AbstractLenses a where
   abstractLenses  :: a ((:>:) a)
+
+class (AbstractLenses a, Zippable1 a) => AbstractType v a | v -> a, a -> v where
+  toAbstract      :: v -> a Identity
+  fromAbstract    :: a Identity -> v
   concreteLenses  :: a (ULens v)
 
 data AbstractVal a f = AbstractVal { _realVal :: f a } deriving (Show, Eq)
@@ -43,40 +45,37 @@ instance Traversable1 (AbstractVal a) where
   traverse1 f (AbstractVal v) = AbstractVal <$> f v
 
 
+instance AbstractLenses (AbstractVal a) where
+  abstractLenses = AbstractVal $ ALens realVal
+
 instance AbstractType Int (AbstractVal Int) where
   toAbstract     = AbstractVal . Identity
   fromAbstract   = runIdentity . get realVal
-  abstractLenses = AbstractVal $ ALens realVal 
   concreteLenses = AbstractVal $ ulens id ($)
 
 instance AbstractType String (AbstractVal String) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
-  abstractLenses = AbstractVal $ ALens realVal 
   concreteLenses = AbstractVal $ ulens id ($)
 
 instance AbstractType UUID (AbstractVal UUID) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
-  abstractLenses = AbstractVal $ ALens realVal 
   concreteLenses = AbstractVal $ ulens id ($)
 
 instance AbstractType Integer (AbstractVal Integer) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
-  abstractLenses = AbstractVal $ ALens realVal 
   concreteLenses = AbstractVal $ ulens id ($)
 
 instance AbstractType Float (AbstractVal Float) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
-  abstractLenses = AbstractVal $ ALens realVal 
   concreteLenses = AbstractVal $ ulens id ($)
 
 instance AbstractType Double (AbstractVal Double) where
   toAbstract   = AbstractVal . Identity
   fromAbstract = runIdentity . get realVal
-  abstractLenses = AbstractVal $ ALens realVal 
   concreteLenses = AbstractVal $ ulens id ($)
 
 {-
@@ -134,10 +133,12 @@ mkAbstractType' dec@(DataD ctx tnm pars [RecC cnm flds] _) =
      aLabels <- mkLabelsWithForDec defaultNaming True False False False aData
      return $ [ aData
               , InstanceD []
+                (ConT (mkName "AbstractLenses") `AppT` appType (aName tnm) parNames)
+                [ FunD (mkName "abstractLenses") [abstractLs]]
+              , InstanceD []
                 (ConT (mkName "AbstractType") `AppT` appType tnm parNames `AppT` appType (aName tnm) parNames)
                 [ FunD (mkName "toAbstract") [toClause]
                 , FunD (mkName "fromAbstract") [fromClause]
-                , FunD (mkName "abstractLenses") [abstractLs]
                 , FunD (mkName "concreteLenses") [concreteLs]
                 ]
               ] ++ aLabels ++ cLabels

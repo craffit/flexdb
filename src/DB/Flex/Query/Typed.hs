@@ -16,7 +16,7 @@ module DB.Flex.Query.Typed
    
    , asc, desc, order, limit, offset
    
-   , now, timeofday, dbTrue, dbFalse
+   , now, timeofday, dbTrue, dbFalse, specInsert
    
    , constant, con, con', isNull, notNull, _default, toAbstractInsert, defaultInsert, ignore, emptyUpdate, isDefault, isIgnore
    
@@ -334,6 +334,12 @@ defaultInsert = fmap1 (const _default) (recordFields :: t Field)
 toAbstractInsert :: (Record t, AbstractType a t) => a -> t (InsertExpr i l)
 toAbstractInsert = zip1 (\Field (Identity v) -> con' v) recordFields . toAbstract
 
+specInsert :: forall t l v. Table t => t (FieldData v) -> t (InsertExpr Single l)
+specInsert = zip1 mkField recordFields
+  where mkField :: Field a -> FieldData v a -> InsertExpr Single l a
+        mkField Field NoData = _default
+        mkField Field (GotData a) = con' a
+
 ignore :: UpdateExpr a
 ignore = Exp $ return $ return "IGNORE"
 
@@ -448,26 +454,26 @@ infix 8 |->>|
        => (forall f g h. r (Exp f g h) :-> Exp f g h a) -> a -> r (Exp t i l) -> r (Exp t i l)
 l |->>| v = set l (con' v) . fmap1 castExp
 
-query' :: Record r => Query i Z (r (Expr i Z)) -> Db [r Identity]
+query' :: (DbMonad m, Record r) => Query i Z (r (Expr i Z)) -> m [r Identity]
 query' q =
   let (rec, bq) = runQuery $ q >>= mapM queryExp . collect bExp
   in map buildRecord <$> B.baseQuery bq (sequence rec)
 
-insert' :: forall i r. Table r => Query i Z (r (InsertExpr i Z)) -> Db [r Identity]
+insert' :: forall i r m. (DbMonad m, Table r) => Query i Z (r (InsertExpr i Z)) -> m [r Identity]
 insert' q =
   let (rec, bq) = runQuery $ q >>= mapM queryExp . collect bExp
       nms       = names (undefined :: r a)
       tname     = tableName (undefined :: r a)
   in map buildRecord <$> B.baseInsert bq tname (zip nms rec)
 
-insertMany' :: forall i r. Table r => [Query i Z (r (InsertExpr i Z))] -> Db [[r Identity]]
+insertMany' :: forall i r m. (Table r, DbMonad m) => [Query i Z (r (InsertExpr i Z))] -> m [[r Identity]]
 insertMany' qs =
   let qs'   = map (\q -> fmap (zip nms) $ swap $ runQuery $ q >>= mapM queryExp . collect bExp) qs
       nms   = names (undefined :: r a)
       tname = tableName (undefined :: r a)
   in map (map buildRecord) <$> B.baseInsertMany tname qs'
 
-update' :: forall t. Table t => (t (SingleExpr Z) -> Query Single Z (t UpdateExpr)) -> Db [t Identity]
+update' :: forall t m. (DbMonad m, Table t) => (t (SingleExpr Z) -> Query Single Z (t UpdateExpr)) -> m [t Identity]
 update' qf =
   let tname     = tableName (undefined :: t a)
       q         = qf . fmap1 (Exp . return . return . ((tname ++ ".") ++) . unFieldName) $ fieldNames
@@ -475,27 +481,27 @@ update' qf =
       nms       = names (undefined :: t a)
   in map buildRecord <$> B.baseUpdate bq tname (zip nms rec)
 
-delete' :: forall t. Table t => (t (SingleExpr Z) -> Query Single Z ()) -> Db [t Identity]
+delete' :: forall t m. (Table t, DbMonad m) => (t (SingleExpr Z) -> Query Single Z ()) -> m [t Identity]
 delete' qf =
   let tName   = tableName (undefined :: t v)
       tFields = map ((tName ++ ".")++) $ names (undefined :: t v)
       (_, bq) = runQuery . qf . fmap1 (Exp . return . return . ((tName ++ ".") ++) . unFieldName) $ fieldNames
   in map buildRecord <$> B.baseDelete bq tName tFields
 
-query :: (Record r, AbstractType a r) => Query i Z (r (Expr i Z)) -> Db [a]
+query :: (Record r, AbstractType a r, DbMonad m) => Query i Z (r (Expr i Z)) -> m [a]
 query = fmap (map fromAbstract) . query'
 
-insert :: (Table r,  AbstractType a r, MeetType t Insert ~ Insert) 
-       => Query i Z (r (Exp t i l)) -> Db [a]
+insert :: (Table r,  AbstractType a r, MeetType t Insert ~ Insert, DbMonad m) 
+       => Query i Z (r (Exp t i l)) -> m [a]
 insert = fmap (map fromAbstract) . insert' . fmap (fmap1 castExp)
 
-insertMany :: (Table r,  AbstractType a r, MeetType t Insert ~ Insert) 
-           => [Query i Z (r (Exp t i l))] -> Db [[a]]
+insertMany :: (Table r,  AbstractType a r, MeetType t Insert ~ Insert, DbMonad m) 
+           => [Query i Z (r (Exp t i l))] -> m [[a]]
 insertMany = fmap (map $ map fromAbstract) . insertMany' . map (fmap (fmap1 castExp))
 
-update :: (Table r, AbstractType a r, MeetType t Update ~ Update) 
-       => (r (SingleExpr Z) -> Query Single Z (r (Exp t Single Z))) -> Db [a]
+update :: (Table r, AbstractType a r, MeetType t Update ~ Update, DbMonad m) 
+       => (r (SingleExpr Z) -> Query Single Z (r (Exp t Single Z))) -> m [a]
 update = fmap (map fromAbstract) . update' . fmap (fmap $ fmap1 castExp)
 
-delete :: (Table r, AbstractType a r) => (r (SingleExpr Z) -> Query Single Z ()) -> Db [a]
+delete :: (Table r, AbstractType a r, DbMonad m) => (r (SingleExpr Z) -> Query Single Z ()) -> m [a]
 delete = fmap (map fromAbstract) . delete'

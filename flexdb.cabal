@@ -36,18 +36,25 @@ Library
                      DB.Flex.Query.Core
   
   build-depends:       base >= 3 && <= 5
+                     , aeson >= 0.7 && < 0.9
                      , containers
                      , convertible >= 1.0
                      , fclabels == 2.0.2.100
                      , filepath == 1.3.*
                      , ghc-prim
                      , HDBC == 2.4.*
+                     , hxt == 9.3.*
+                     , json-schema >= 0.6 && < 0.8
                      , mtl 
+                     , MonadCatchIO-transformers == 0.3.*
                      , safe == 0.3.*
                      , split == 0.2.*
                      , tagged 
                      , template-haskell
+                     , text == 1.2.*
+                     , transformers
                      , time
+                     , unordered-containers == 0.2.*
                      , uuid
                      
   hs-source-dirs:      src
